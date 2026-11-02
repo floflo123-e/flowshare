@@ -1,0 +1,3011 @@
+name: Construire l'APK
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.11.1"
+
+      - name: "Fichier .gitignore"
+        run: |
+          mkdir -p "FlowShare/."
+          cat > "FlowShare/.gitignore" <<'FLOWSHARE_EOF'
+          .gradle/
+          build/
+          app/build/
+          local.properties
+          .idea/
+          *.iml
+          FLOWSHARE_EOF
+
+      - name: "Fichier app/build.gradle.kts"
+        run: |
+          mkdir -p "FlowShare/app"
+          cat > "FlowShare/app/build.gradle.kts" <<'FLOWSHARE_EOF'
+          plugins {
+              id("com.android.application")
+              id("org.jetbrains.kotlin.android")
+          }
+
+          android {
+              namespace = "com.flowshare.app"
+              compileSdk = 35
+
+              defaultConfig {
+                  applicationId = "com.flowshare.app"
+                  minSdk = 29
+                  targetSdk = 35
+                  versionCode = 1
+                  versionName = "0.1"
+              }
+
+              buildTypes {
+                  release {
+                      isMinifyEnabled = false
+                      // Prototype : signé avec la clé de debug pour pouvoir l'installer directement.
+                      signingConfig = signingConfigs.getByName("debug")
+                  }
+              }
+
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+              kotlinOptions {
+                  jvmTarget = "17"
+              }
+          }
+
+          dependencies {
+              implementation("androidx.core:core-ktx:1.13.1")
+              implementation("androidx.activity:activity-ktx:1.9.3")
+              implementation("androidx.recyclerview:recyclerview:1.3.2")
+              implementation("com.google.android.gms:play-services-nearby:19.3.0")
+          }
+          FLOWSHARE_EOF
+
+      - name: "Fichier app/src/main/AndroidManifest.xml"
+        run: |
+          mkdir -p "FlowShare/app/src/main"
+          cat > "FlowShare/app/src/main/AndroidManifest.xml" <<'FLOWSHARE_EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+              <!-- NFC : le "rapprochement" des téléphones -->
+              <uses-permission android:name="android.permission.NFC" />
+              <uses-feature android:name="android.hardware.nfc" android:required="false" />
+              <uses-feature android:name="android.hardware.nfc.hce" android:required="false" />
+
+              <!-- Nearby Connections : le transfert rapide (Bluetooth + Wi-Fi direct) -->
+              <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+              <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+              <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+              <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+              <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" android:maxSdkVersion="32" />
+              <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" android:maxSdkVersion="32" />
+              <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
+              <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
+              <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+              <!-- Galerie intégrée -->
+              <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+              <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED" />
+              <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+
+              <uses-feature android:name="android.hardware.bluetooth_le" android:required="true" />
+
+              <uses-permission
+                  android:name="android.permission.NEARBY_WIFI_DEVICES"
+                  android:usesPermissionFlags="neverForLocation" />
+
+              <application
+                  android:name=".FlowApp"
+                  android:allowBackup="false"
+                  android:icon="@mipmap/ic_launcher"
+                  android:label="@string/app_name"
+                  android:supportsRtl="true"
+                  android:theme="@style/Theme.FlowShare">
+
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+
+                  <!-- Écran d'envoi : ouvert depuis la Galerie via "Partager" ou "Ouvrir avec" -->
+                  <activity
+                      android:name=".SendActivity"
+                      android:exported="true"
+                      android:label="@string/send_label"
+                      android:launchMode="singleTask"
+                      android:theme="@style/Theme.FlowShare.Fullscreen">
+                      <intent-filter>
+                          <action android:name="android.intent.action.SEND" />
+                          <category android:name="android.intent.category.DEFAULT" />
+                          <data android:mimeType="image/*" />
+                      </intent-filter>
+                      <intent-filter>
+                          <action android:name="android.intent.action.VIEW" />
+                          <category android:name="android.intent.category.DEFAULT" />
+                          <data android:mimeType="image/*" />
+                      </intent-filter>
+                  </activity>
+
+                  <!-- Écran de réception : lancé automatiquement par le système quand on
+                       approche un téléphone qui envoie, même si l'app est fermée. -->
+                  <activity
+                      android:name=".ReceiveActivity"
+                      android:exported="true"
+                      android:launchMode="singleTask"
+                      android:excludeFromRecents="true"
+                      android:theme="@style/Theme.FlowShare.Fullscreen">
+                      <intent-filter>
+                          <action android:name="android.nfc.action.NDEF_DISCOVERED" />
+                          <category android:name="android.intent.category.DEFAULT" />
+                          <data android:mimeType="application/vnd.com.flowshare.token" />
+                      </intent-filter>
+                  </activity>
+
+                  <activity
+                      android:name=".SetupActivity"
+                      android:exported="false"
+                      android:label="@string/settings" />
+
+                  <!-- Pont vers la Galerie Samsung + écoute Bluetooth (sans notification permanente) -->
+                  <service
+                      android:name=".FlowAccessibilityService"
+                      android:exported="true"
+                      android:label="@string/app_name"
+                      android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+                      <intent-filter>
+                          <action android:name="android.accessibilityservice.AccessibilityService" />
+                      </intent-filter>
+                      <meta-data
+                          android:name="android.accessibilityservice"
+                          android:resource="@xml/accessibility_service" />
+                  </service>
+
+                  <!-- Le téléphone qui envoie se fait passer pour une "puce NFC" -->
+                  <service
+                      android:name=".FlowHceService"
+                      android:exported="true"
+                      android:permission="android.permission.BIND_NFC_SERVICE">
+                      <intent-filter>
+                          <action android:name="android.nfc.cardemulation.action.HOST_APDU_SERVICE" />
+                      </intent-filter>
+                      <meta-data
+                          android:name="android.nfc.cardemulation.host_apdu_service"
+                          android:resource="@xml/apduservice" />
+                  </service>
+              </application>
+          </manifest>
+          FLOWSHARE_EOF
+
+      - name: "Fichier app/src/main/java/com/flowshare/app/BleProximity.kt"
+        run: |
+          mkdir -p "FlowShare/app/src/main/java/com/flowshare/app"
+          cat > "FlowShare/app/src/main/java/com/flowshare/app/BleProximity.kt" <<'FLOWSHARE_EOF'
+          package com.flowshare.app
+
+          import android.annotation.SuppressLint
+          import android.bluetooth.BluetoothAdapter
+          import android.bluetooth.BluetoothManager
+          import android.bluetooth.le.AdvertiseCallback
+          import android.bluetooth.le.AdvertiseData
+          import android.bluetooth.le.AdvertiseSettings
+          import android.bluetooth.le.ScanCallback
+          import android.bluetooth.le.ScanFilter
+          import android.bluetooth.le.ScanResult
+          import android.bluetooth.le.ScanSettings
+          import android.content.Context
+          import android.os.ParcelUuid
+          import android.os.SystemClock
+
+          /**
+           * Détection du rapprochement par Bluetooth Low Energy.
+           *
+           *  - Le téléphone qui a une photo prête diffuse un petit signal contenant le code de session.
+           *  - Les autres téléphones écoutent. Quand le signal devient très fort (téléphones collés),
+           *    on déclenche la réception.
+           *
+           * Fonctionne quelle que soit l'orientation (haut contre haut, dos à dos…),
+           * contrairement au NFC qui exige d'aligner les antennes.
+           */
+          @SuppressLint("MissingPermission")
+          object BleProximity {
+
+              val SERVICE_UUID: ParcelUuid = ParcelUuid.fromString("0000F1A5-0000-1000-8000-00805F9B34FB")
+
+              private const val HITS_NEEDED = 2
+              private const val HIT_WINDOW_MS = 1500L
+
+              private class Hit(var count: Int, var time: Long)
+
+              private val hits = HashMap<String, Hit>()
+              private var appContext: Context? = null
+              private var scanning = false
+              private var advertising = false
+
+              /** Dernier signal FlowShare capté (pour l'écran de réglage de la sensibilité). */
+              @Volatile
+              var lastRssi: Int? = null
+                  private set
+
+              @Volatile
+              var lastSeenAt: Long = 0L
+                  private set
+
+              /** Appelé sur le thread principal quand un téléphone qui envoie est collé au nôtre. */
+              var onProximity: ((String) -> Unit)? = null
+
+              private fun adapter(context: Context): BluetoothAdapter? =
+                  context.getSystemService(BluetoothManager::class.java)?.adapter
+
+              fun isBluetoothOn(context: Context): Boolean = adapter(context)?.isEnabled == true
+
+              // ---------- Diffusion (téléphone qui envoie) ----------
+
+              private val advertiseCallback = object : AdvertiseCallback() {
+                  override fun onStartFailure(errorCode: Int) {
+                      advertising = false
+                  }
+              }
+
+              fun startAdvertising(context: Context, token: String) {
+                  stopAdvertising(context)
+                  val adapter = adapter(context) ?: return
+                  if (!adapter.isEnabled || !Permissions.allGranted(context)) return
+                  val advertiser = adapter.bluetoothLeAdvertiser ?: return
+                  val settings = AdvertiseSettings.Builder()
+                      .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
+                      .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_MEDIUM)
+                      .setConnectable(false)
+                      .setTimeout(0)
+                      .build()
+                  val data = AdvertiseData.Builder()
+                      .setIncludeDeviceName(false)
+                      .setIncludeTxPowerLevel(false)
+                      .addServiceData(SERVICE_UUID, token.toByteArray(Charsets.US_ASCII))
+                      .build()
+                  try {
+                      advertiser.startAdvertising(settings, data, advertiseCallback)
+                      advertising = true
+                  } catch (_: Exception) {
+                      advertising = false
+                  }
+              }
+
+              fun stopAdvertising(context: Context) {
+                  if (!advertising) return
+                  advertising = false
+                  try {
+                      adapter(context)?.bluetoothLeAdvertiser?.stopAdvertising(advertiseCallback)
+                  } catch (_: Exception) {
+                  }
+              }
+
+              // ---------- Écoute (téléphone qui reçoit) ----------
+
+              private val scanCallback = object : ScanCallback() {
+                  override fun onScanResult(callbackType: Int, result: ScanResult) {
+                      handle(result)
+                  }
+
+                  override fun onBatchScanResults(results: MutableList<ScanResult>) {
+                      results.forEach { handle(it) }
+                  }
+
+                  override fun onScanFailed(errorCode: Int) {
+                      scanning = false
+                  }
+              }
+
+              fun startScan(context: Context) {
+                  if (scanning) return
+                  appContext = context.applicationContext
+                  val adapter = adapter(context) ?: return
+                  if (!adapter.isEnabled || !Permissions.allGranted(context)) return
+                  val scanner = adapter.bluetoothLeScanner ?: return
+                  val filter = ScanFilter.Builder()
+                      .setServiceData(SERVICE_UUID, ByteArray(0), ByteArray(0))
+                      .build()
+                  val settings = ScanSettings.Builder()
+                      .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
+                      .setReportDelay(0)
+                      .build()
+                  try {
+                      scanner.startScan(listOf(filter), settings, scanCallback)
+                      scanning = true
+                  } catch (_: Exception) {
+                      scanning = false
+                  }
+              }
+
+              fun stopScan(context: Context) {
+                  if (!scanning) return
+                  scanning = false
+                  hits.clear()
+                  try {
+                      adapter(context)?.bluetoothLeScanner?.stopScan(scanCallback)
+                  } catch (_: Exception) {
+                  }
+              }
+
+              private fun handle(result: ScanResult) {
+                  val data = result.scanRecord?.getServiceData(SERVICE_UUID) ?: return
+                  if (data.isEmpty()) return
+                  val token = String(data, Charsets.US_ASCII)
+                  val now = SystemClock.elapsedRealtime()
+                  lastRssi = result.rssi
+                  lastSeenAt = now
+
+                  val ctx = appContext ?: return
+                  if (result.rssi < Prefs.rssiThreshold(ctx)) {
+                      hits.remove(token)
+                      return
+                  }
+                  val hit = hits[token]
+                  if (hit != null && now - hit.time < HIT_WINDOW_MS) {
+                      hit.count++
+                      hit.time = now
+                  } else {
+                      hits[token] = Hit(1, now)
+                  }
+                  if ((hits[token]?.count ?: 0) >= HITS_NEEDED) {
+                      hits.remove(token)
+                      onProximity?.invoke(token)
+                  }
+              }
+          }
+          FLOWSHARE_EOF
+
+      - name: "Fichier app/src/main/java/com/flowshare/app/FlowAccessibilityService.kt"
+        run: |
+          mkdir -p "FlowShare/app/src/main/java/com/flowshare/app"
+          cat > "FlowShare/app/src/main/java/com/flowshare/app/FlowAccessibilityService.kt" <<'FLOWSHARE_EOF'
+          package com.flowshare.app
+
+          import android.accessibilityservice.AccessibilityService
+          import android.accessibilityservice.GestureDescription
+          import android.app.KeyguardManager
+          import android.bluetooth.BluetoothAdapter
+          import android.content.BroadcastReceiver
+          import android.content.ComponentName
+          import android.content.Context
+          import android.content.Intent
+          import android.content.IntentFilter
+          import android.graphics.Path
+          import android.graphics.Rect
+          import android.os.Handler
+          import android.os.Looper
+          import android.os.PowerManager
+          import android.os.SystemClock
+          import android.provider.Settings
+          import android.view.accessibility.AccessibilityEvent
+          import android.view.accessibility.AccessibilityNodeInfo
+          import android.widget.Toast
+          import androidx.core.content.ContextCompat
+
+          /**
+           * Le "pont" vers la Galerie Samsung (et d'autres galeries).
+           *
+           *  1. Il repère quand une photo est ouverte en plein écran (le bouton "Partager" est visible)
+           *     et prépare l'envoi : NFC + Bluetooth actifs.
+           *  2. Quand on colle un autre téléphone, il appuie lui-même sur Partager › FlowShare :
+           *     la vraie photo (pleine qualité) arrive dans FlowShare et part aussitôt.
+           *  3. Côté réception, il écoute le Bluetooth en permanence (écran allumé) et ouvre
+           *     FlowShare tout seul quand un téléphone qui envoie est collé.
+           *
+           * Un service d'accessibilité reste actif sans notification permanente.
+           */
+          class FlowAccessibilityService : AccessibilityService(), SenderEngine.Listener {
+
+              private val handler = Handler(Looper.getMainLooper())
+              private var galleryArmed = false
+
+              // Automatisation du menu Partager
+              private var autoActive = false
+              private var autoStartedAt = 0L
+              private var lastScrollAt = 0L
+              private var scrollTries = 0
+
+              // Évite d'ouvrir deux fois la réception pour le même envoi
+              private val recentTokens = HashMap<String, Long>()
+
+              private val evaluate = Runnable { evaluateForeground() }
+              private val autoStep = Runnable { stepAutoShare() }
+              private val autoTimeout = Runnable { stopAutoShare(success = false) }
+
+              private val systemReceiver = object : BroadcastReceiver() {
+                  override fun onReceive(context: Context, intent: Intent) {
+                      when (intent.action) {
+                          Intent.ACTION_SCREEN_OFF -> BleProximity.stopScan(this@FlowAccessibilityService)
+                          Intent.ACTION_SCREEN_ON, Intent.ACTION_USER_PRESENT -> startScanIfPossible()
+                          BluetoothAdapter.ACTION_STATE_CHANGED -> {
+                              val s = intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR)
+                              if (s == BluetoothAdapter.STATE_ON) startScanIfPossible()
+                              else if (s == BluetoothAdapter.STATE_OFF) BleProximity.stopScan(this@FlowAccessibilityService)
+                          }
+                      }
+                  }
+              }
+
+              override fun onServiceConnected() {
+                  super.onServiceConnected()
+                  val filter = IntentFilter().apply {
+                      addAction(Intent.ACTION_SCREEN_ON)
+                      addAction(Intent.ACTION_SCREEN_OFF)
+                      addAction(Intent.ACTION_USER_PRESENT)
+                      addAction(BluetoothAdapter.ACTION_STATE_CHANGED)
+                  }
+                  ContextCompat.registerReceiver(this, systemReceiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
+                  SenderEngine.addListener(this)
+                  SenderEngine.shareTrigger = { startAutoShare() }
+                  BleProximity.onProximity = { token -> onProximity(token) }
+                  startScanIfPossible()
+              }
+
+              override fun onDestroy() {
+                  handler.removeCallbacksAndMessages(null)
+                  try {
+                      unregisterReceiver(systemReceiver)
+                  } catch (_: Exception) {
+                  }
+                  SenderEngine.removeListener(this)
+                  SenderEngine.shareTrigger = null
+                  BleProximity.onProximity = null
+                  BleProximity.stopScan(this)
+                  if (galleryArmed) SenderEngine.disarm(SenderEngine.Source.GALLERY)
+                  super.onDestroy()
+              }
+
+              override fun onInterrupt() {}
+
+              override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+                  val pkg = event?.packageName?.toString() ?: return
+                  if (autoActive) {
+                      handler.removeCallbacks(autoStep)
+                      handler.postDelayed(autoStep, 200)
+                      return
+                  }
+                  if (pkg == packageName) return
+                  if (pkg !in GALLERY_PACKAGES && !galleryArmed) return
+                  handler.removeCallbacks(evaluate)
+                  handler.postDelayed(evaluate, 300)
+              }
+
+              override fun onEngineUpdate(state: SenderEngine.State, progress: Float, message: String?) {
+                  if (state == SenderEngine.State.IDLE) {
+                      galleryArmed = false
+                      handler.removeCallbacks(evaluate)
+                      handler.postDelayed(evaluate, 500)
+                  }
+                  if (state == SenderEngine.State.FAILED && autoActive) stopAutoShare(success = false, silent = true)
+              }
+
+              // ---------- 1. Repérer une photo ouverte dans la Galerie ----------
+
+              private fun evaluateForeground() {
+                  if (autoActive) return
+                  val root = rootInActiveWindow ?: return
+                  val pkg = root.packageName?.toString() ?: return
+                  if (pkg == packageName) return
+                  val viewerOpen = pkg in GALLERY_PACKAGES && findShareButton(root) != null
+                  if (viewerOpen && !galleryArmed) {
+                      if (SenderEngine.state == SenderEngine.State.IDLE || SenderEngine.source == SenderEngine.Source.GALLERY) {
+                          galleryArmed = SenderEngine.arm(null, SenderEngine.Source.GALLERY)
+                      }
+                  } else if (!viewerOpen && galleryArmed) {
+                      galleryArmed = false
+                      SenderEngine.disarm(SenderEngine.Source.GALLERY)
+                  }
+              }
+
+              private fun findShareButton(root: AccessibilityNodeInfo): AccessibilityNodeInfo? =
+                  findNode(root) { node ->
+                      if (!node.isVisibleToUser) return@findNode false
+                      val label = (node.contentDescription ?: node.text)?.toString()?.trim() ?: return@findNode false
+                      SHARE_LABELS.any { it.equals(label, ignoreCase = true) }
+                  }
+
+              // ---------- 2. Appuyer sur Partager › FlowShare ----------
+
+              private fun startAutoShare() {
+                  val root = rootInActiveWindow
+                  val share = root?.let { findShareButton(it) }
+                  if (share == null || !click(share)) {
+                      SenderEngine.fail(getString(R.string.auto_no_share))
+                      return
+                  }
+                  autoActive = true
+                  autoStartedAt = SystemClock.elapsedRealtime()
+                  lastScrollAt = 0L
+                  scrollTries = 0
+                  handler.postDelayed(autoStep, 500)
+                  handler.postDelayed(autoTimeout, 7000)
+              }
+
+              private fun stepAutoShare() {
+                  if (!autoActive) return
+                  val target = findInAllWindows { node ->
+                      node.packageName?.toString() != packageName &&
+                              ((node.text?.toString()?.contains(TARGET_LABEL, ignoreCase = true) == true) ||
+                                      (node.contentDescription?.toString()?.contains(TARGET_LABEL, ignoreCase = true) == true))
+                  }
+                  if (target != null && click(target)) {
+                      stopAutoShare(success = true)
+                      return
+                  }
+                  // FlowShare n'est pas visible dans le menu : on fait défiler la liste des apps.
+                  val now = SystemClock.elapsedRealtime()
+                  if (now - autoStartedAt > 1200 && now - lastScrollAt > 700 && scrollTries < 6) {
+                      lastScrollAt = now
+                      scrollTries++
+                      rootInActiveWindow?.let { root ->
+                          findNode(root) { it.isScrollable && it.isVisibleToUser }
+                              ?.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
+                      }
+                  }
+                  handler.postDelayed(autoStep, 400)
+              }
+
+              private fun stopAutoShare(success: Boolean, silent: Boolean = false) {
+                  if (!autoActive) return
+                  autoActive = false
+                  handler.removeCallbacks(autoStep)
+                  handler.removeCallbacks(autoTimeout)
+                  if (!success && !silent) {
+                      Toast.makeText(this, R.string.auto_not_found, Toast.LENGTH_LONG).show()
+                      SenderEngine.fail(getString(R.string.auto_not_found))
+                  }
+              }
+
+              // ---------- 3. Réception déclenchée par le Bluetooth ----------
+
+              private fun startScanIfPossible() {
+                  val power = getSystemService(PowerManager::class.java)
+                  if (power?.isInteractive == true) BleProximity.startScan(this)
+              }
+
+              private fun onProximity(token: String) {
+                  // Ce téléphone a lui-même une photo prête : c'est lui qui envoie, pas lui qui reçoit.
+                  if (SenderEngine.state != SenderEngine.State.IDLE) return
+                  val keyguard = getSystemService(KeyguardManager::class.java)
+                  if (keyguard?.isKeyguardLocked == true) return
+                  val now = SystemClock.elapsedRealtime()
+                  recentTokens.entries.removeAll { now - it.value > 60_000 }
+                  if (recentTokens.containsKey(token)) return
+                  recentTokens[token] = now
+                  val intent = Intent(this, ReceiveActivity::class.java)
+                      .putExtra(ShareSession.EXTRA_TOKEN, token)
+                      .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                  try {
+                      startActivity(intent)
+                  } catch (_: Exception) {
+                  }
+              }
+
+              // ---------- Outils ----------
+
+              private fun click(node: AccessibilityNodeInfo): Boolean {
+                  var n: AccessibilityNodeInfo? = node
+                  while (n != null && !n.isClickable) n = n.parent
+                  if (n != null && n.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return true
+                  // Plan B : un vrai "tap" au centre de l'élément.
+                  val r = Rect()
+                  node.getBoundsInScreen(r)
+                  if (r.isEmpty) return false
+                  val path = Path().apply { moveTo(r.exactCenterX(), r.exactCenterY()) }
+                  val gesture = GestureDescription.Builder()
+                      .addStroke(GestureDescription.StrokeDescription(path, 0, 60))
+                      .build()
+                  return dispatchGesture(gesture, null, null)
+              }
+
+              private fun findInAllWindows(match: (AccessibilityNodeInfo) -> Boolean): AccessibilityNodeInfo? {
+                  val roots = try {
+                      windows.mapNotNull { it.root }
+                  } catch (_: Exception) {
+                      emptyList()
+                  }
+                  for (root in roots) findNode(root, match)?.let { return it }
+                  return rootInActiveWindow?.let { findNode(it, match) }
+              }
+
+              private fun findNode(
+                  root: AccessibilityNodeInfo,
+                  match: (AccessibilityNodeInfo) -> Boolean
+              ): AccessibilityNodeInfo? {
+                  val queue = ArrayDeque<AccessibilityNodeInfo>()
+                  queue.add(root)
+                  var visited = 0
+                  while (queue.isNotEmpty() && visited < 1500) {
+                      val node = queue.removeFirst()
+                      visited++
+                      if (match(node)) return node
+                      for (i in 0 until node.childCount) node.getChild(i)?.let { queue.add(it) }
+                  }
+                  return null
+              }
+
+              companion object {
+                  private const val TARGET_LABEL = "FlowShare"
+
+                  val GALLERY_PACKAGES = setOf(
+                      "com.sec.android.gallery3d",          // Galerie Samsung
+                      "com.google.android.apps.photos",     // Google Photos
+                      "com.miui.gallery",                   // Xiaomi
+                      "com.coloros.gallery3d",              // Oppo / OnePlus
+                      "com.oneplus.gallery",
+                      "com.vivo.gallery",
+                      "com.huawei.photos"
+                  )
+
+                  private val SHARE_LABELS = listOf(
+                      "Partager", "Share", "Compartir", "Teilen", "Condividi", "Partilhar", "Delen"
+                  )
+
+                  fun isEnabled(context: Context): Boolean {
+                      val enabled = Settings.Secure.getString(
+                          context.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+                      ) ?: return false
+                      val me = ComponentName(context, FlowAccessibilityService::class.java)
+                      return enabled.split(':').any {
+                          ComponentName.unflattenFromString(it) == me
+                      }
+                  }
+              }
+          }
+          FLOWSHARE_EOF
+
+      - name: "Fichier app/src/main/java/com/flowshare/app/FlowApp.kt"
+        run: |
+          mkdir -p "FlowShare/app/src/main/java/com/flowshare/app"
+          cat > "FlowShare/app/src/main/java/com/flowshare/app/FlowApp.kt" <<'FLOWSHARE_EOF'
+          package com.flowshare.app
+
+          import android.app.Application
+
+          class FlowApp : Application() {
+              override fun onCreate() {
+                  super.onCreate()
+                  SenderEngine.init(this)
+              }
+          }
+          FLOWSHARE_EOF
+
+      - name: "Fichier app/src/main/java/com/flowshare/app/FlowHceService.kt"
+        run: |
+          mkdir -p "FlowShare/app/src/main/java/com/flowshare/app"
+          cat > "FlowShare/app/src/main/java/com/flowshare/app/FlowHceService.kt" <<'FLOWSHARE_EOF'
+          package com.flowshare.app
+
+          import android.nfc.NdefMessage
+          import android.nfc.NdefRecord
+          import android.nfc.cardemulation.HostApduService
+          import android.os.Bundle
+
+          /**
+           * Le téléphone qui envoie émule une puce NFC "Type 4" contenant un petit message :
+           *  - un code de session (token) pour retrouver ce téléphone via Nearby,
+           *  - un "Android Application Record" qui fait ouvrir FlowShare sur l'autre téléphone,
+           *    même si l'app y est fermée.
+           *
+           * Le service ne répond que lorsqu'une photo est prête à être envoyée ;
+           * le reste du temps il reste muet et ne gêne pas le paiement sans contact.
+           */
+          class FlowHceService : HostApduService() {
+
+              private var selectedFile = FILE_NONE
+              private var ndefFile: ByteArray? = null
+              private var notified = false
+
+              override fun processCommandApdu(apdu: ByteArray, extras: Bundle?): ByteArray {
+                  if (apdu.size < 4) return SW_INS_NOT_SUPPORTED
+                  val ins = apdu[1].toInt() and 0xFF
+                  val p1 = apdu[2].toInt() and 0xFF
+                  val p2 = apdu[3].toInt() and 0xFF
+                  return when (ins) {
+                      0xA4 -> handleSelect(apdu, p1)
+                      0xB0 -> handleReadBinary(apdu, p1, p2)
+                      else -> SW_INS_NOT_SUPPORTED
+                  }
+              }
+
+              private fun handleSelect(apdu: ByteArray, p1: Int): ByteArray {
+                  if (apdu.size < 5) return SW_NOT_FOUND
+                  val lc = apdu[4].toInt() and 0xFF
+                  if (apdu.size < 5 + lc) return SW_NOT_FOUND
+                  val data = apdu.copyOfRange(5, 5 + lc)
+
+                  // SELECT par AID (application NDEF)
+                  if (p1 == 0x04) {
+                      if (!data.contentEquals(NDEF_AID)) return SW_NOT_FOUND
+                      val token = ShareSession.token ?: return SW_NOT_FOUND
+                      ndefFile = buildNdefFile(token)
+                      selectedFile = FILE_NONE
+                      notified = false
+                      return SW_OK
+                  }
+
+                  // SELECT par identifiant de fichier (CC ou NDEF)
+                  if (p1 == 0x00 && ndefFile != null) {
+                      selectedFile = when {
+                          data.contentEquals(CC_FILE_ID) -> FILE_CC
+                          data.contentEquals(NDEF_FILE_ID) -> FILE_NDEF
+                          else -> return SW_NOT_FOUND
+                      }
+                      return SW_OK
+                  }
+                  return SW_NOT_FOUND
+              }
+
+              private fun handleReadBinary(apdu: ByteArray, p1: Int, p2: Int): ByteArray {
+                  val file = when (selectedFile) {
+                      FILE_CC -> CC_FILE
+                      FILE_NDEF -> ndefFile ?: return SW_NOT_FOUND
+                      else -> return SW_NOT_FOUND
+                  }
+                  val offset = (p1 shl 8) or p2
+                  var le = if (apdu.size >= 5) apdu[4].toInt() and 0xFF else 0
+                  if (le == 0) le = 256
+                  if (offset > file.size) return SW_WRONG_PARAMS
+                  val end = minOf(file.size, offset + le)
+
+                  // Dès que l'autre téléphone lit le contenu, on lance l'animation côté envoi.
+                  if (selectedFile == FILE_NDEF && end > 2 && !notified) {
+                      notified = true
+                      ShareSession.notifyTouched()
+                  }
+                  return file.copyOfRange(offset, end) + SW_OK
+              }
+
+              override fun onDeactivated(reason: Int) {
+                  selectedFile = FILE_NONE
+              }
+
+              private fun buildNdefFile(token: String): ByteArray {
+                  val message = NdefMessage(
+                      NdefRecord.createMime(ShareSession.MIME_TOKEN, token.toByteArray(Charsets.UTF_8)),
+                      NdefRecord.createApplicationRecord(packageName)
+                  ).toByteArray()
+                  val n = message.size
+                  return byteArrayOf((n shr 8).toByte(), n.toByte()) + message
+              }
+
+              companion object {
+                  private const val FILE_NONE = 0
+                  private const val FILE_CC = 1
+                  private const val FILE_NDEF = 2
+
+                  private val NDEF_AID = hex("D2760000850101")
+                  private val CC_FILE_ID = hex("E103")
+                  private val NDEF_FILE_ID = hex("E104")
+
+                  // Capability Container : version 2.0, lecture par blocs de 127 octets,
+                  // fichier NDEF E104 de 4 Ko max, lecture libre, écriture interdite.
+                  private val CC_FILE = hex("000F20007F007F0406E104100000FF")
+
+                  private val SW_OK = hex("9000")
+                  private val SW_NOT_FOUND = hex("6A82")
+                  private val SW_WRONG_PARAMS = hex("6B00")
+                  private val SW_INS_NOT_SUPPORTED = hex("6D00")
+
+                  private fun hex(s: String): ByteArray =
+                      ByteArray(s.length / 2) { i -> s.substring(i * 2, i * 2 + 2).toInt(16).toByte() }
+              }
+          }
+          FLOWSHARE_EOF
+
+      - name: "Fichier app/src/main/java/com/flowshare/app/GlowEdgeView.kt"
+        run: |
+          mkdir -p "FlowShare/app/src/main/java/com/flowshare/app"
+          cat > "FlowShare/app/src/main/java/com/flowshare/app/GlowEdgeView.kt" <<'FLOWSHARE_EOF'
+          package com.flowshare.app
+
+          import android.animation.ValueAnimator
+          import android.content.Context
+          import android.graphics.Canvas
+          import android.graphics.Color
+          import android.graphics.Paint
+          import android.graphics.RadialGradient
+          import android.graphics.Shader
+          import android.util.AttributeSet
+          import android.view.View
+          import android.view.animation.DecelerateInterpolator
+
+          /**
+           * La lueur blanche/bleue qui apparaît sur le bord de l'écran,
+           * comme dans la vidéo, avec une légère pulsation.
+           */
+          class GlowEdgeView @JvmOverloads constructor(
+              context: Context,
+              attrs: AttributeSet? = null
+          ) : View(context, attrs) {
+
+              private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+              private var intensity = 0f
+              private var pulse = 0f
+              private var intensityAnimator: ValueAnimator? = null
+              private var pulseAnimator: ValueAnimator? = null
+
+              fun setIntensity(target: Float, durationMs: Long = 450L) {
+                  intensityAnimator?.cancel()
+                  intensityAnimator = ValueAnimator.ofFloat(intensity, target).apply {
+                      duration = durationMs
+                      interpolator = DecelerateInterpolator()
+                      addUpdateListener {
+                          intensity = it.animatedValue as Float
+                          invalidate()
+                      }
+                      start()
+                  }
+              }
+
+              fun startPulse() {
+                  if (pulseAnimator != null) return
+                  pulseAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
+                      duration = 1100L
+                      repeatMode = ValueAnimator.REVERSE
+                      repeatCount = ValueAnimator.INFINITE
+                      addUpdateListener {
+                          pulse = it.animatedValue as Float
+                          invalidate()
+                      }
+                      start()
+                  }
+              }
+
+              fun stopPulse() {
+                  pulseAnimator?.cancel()
+                  pulseAnimator = null
+                  pulse = 0f
+                  invalidate()
+              }
+
+              override fun onDetachedFromWindow() {
+                  super.onDetachedFromWindow()
+                  intensityAnimator?.cancel()
+                  pulseAnimator?.cancel()
+              }
+
+              override fun onDraw(canvas: Canvas) {
+                  super.onDraw(canvas)
+                  if (intensity <= 0.01f || width == 0) return
+                  val w = width.toFloat()
+                  val h = height.toFloat()
+                  val radius = w * (0.8f + 0.15f * pulse) * (0.5f + 0.5f * intensity)
+                  val a = (intensity * (0.8f + 0.2f * pulse)).coerceIn(0f, 1f)
+                  paint.shader = RadialGradient(
+                      w / 2f, -radius * 0.2f, radius,
+                      intArrayOf(
+                          withAlpha(Color.WHITE, a),
+                          withAlpha(0xFF8FD3FF.toInt(), a * 0.75f),
+                          withAlpha(0xFF4B6BFF.toInt(), a * 0.3f),
+                          Color.TRANSPARENT
+                      ),
+                      floatArrayOf(0f, 0.35f, 0.7f, 1f),
+                      Shader.TileMode.CLAMP
+                  )
+                  canvas.drawRect(0f, 0f, w, minOf(h, radius), paint)
+              }
+
+              private fun withAlpha(color: Int, alpha: Float): Int =
+                  Color.argb((255 * alpha).toInt().coerceIn(0, 255), Color.red(color), Color.green(color), Color.blue(color))
+          }
+          FLOWSHARE_EOF
+
+      - name: "Fichier app/src/main/java/com/flowshare/app/MainActivity.kt"
+        run: |
+          mkdir -p "FlowShare/app/src/main/java/com/flowshare/app"
+          cat > "FlowShare/app/src/main/java/com/flowshare/app/MainActivity.kt" <<'FLOWSHARE_EOF'
+          package com.flowshare.app
+
+          import android.Manifest
+          import android.content.ContentUris
+          import android.content.Context
+          import android.content.Intent
+          import android.content.pm.PackageManager
+          import android.graphics.Bitmap
+          import android.os.Build
+          import android.os.Bundle
+          import android.provider.MediaStore
+          import android.util.AttributeSet
+          import android.util.LruCache
+          import android.util.Size
+          import android.view.View
+          import android.view.ViewGroup
+          import android.widget.Button
+          import android.widget.ImageView
+          import android.widget.TextView
+          import androidx.activity.ComponentActivity
+          import androidx.activity.result.contract.ActivityResultContracts
+          import androidx.core.content.ContextCompat
+          import androidx.recyclerview.widget.GridLayoutManager
+          import androidx.recyclerview.widget.RecyclerView
+          import java.util.concurrent.Executors
+
+          /**
+           * La galerie FlowShare : toutes tes photos. Touche une photo pour l'ouvrir,
+           * puis colle ton téléphone contre un autre : elle part.
+           */
+          class MainActivity : ComponentActivity() {
+
+              private lateinit var banner: TextView
+              private lateinit var btnPhotos: Button
+              private lateinit var grid: RecyclerView
+
+              private val ids = ArrayList<Long>()
+              private val io = Executors.newFixedThreadPool(3)
+              private val cache = object : LruCache<Long, Bitmap>(
+                  (Runtime.getRuntime().maxMemory() / 1024 / 8).toInt()
+              ) {
+                  override fun sizeOf(key: Long, value: Bitmap) = value.byteCount / 1024
+              }
+
+              private val askPhotos =
+                  registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { refresh() }
+
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  setContentView(R.layout.activity_main)
+                  banner = findViewById(R.id.banner)
+                  btnPhotos = findViewById(R.id.btnPhotos)
+                  grid = findViewById(R.id.grid)
+
+                  findViewById<View>(R.id.btnSettings).setOnClickListener {
+                      startActivity(Intent(this, SetupActivity::class.java))
+                  }
+                  banner.setOnClickListener { startActivity(Intent(this, SetupActivity::class.java)) }
+                  btnPhotos.setOnClickListener { askPhotos.launch(photoPermissions()) }
+
+                  grid.layoutManager = GridLayoutManager(this, 3)
+                  grid.adapter = adapter
+              }
+
+              override fun onResume() {
+                  super.onResume()
+                  refresh()
+              }
+
+              override fun onDestroy() {
+                  super.onDestroy()
+                  io.shutdownNow()
+              }
+
+              private fun refresh() {
+                  banner.visibility = if (SetupActivity.isReady(this)) View.GONE else View.VISIBLE
+                  if (hasPhotoAccess()) {
+                      btnPhotos.visibility = View.GONE
+                      grid.visibility = View.VISIBLE
+                      loadPhotos()
+                  } else {
+                      btnPhotos.visibility = View.VISIBLE
+                      grid.visibility = View.GONE
+                  }
+              }
+
+              private fun photoPermissions(): Array<String> = when {
+                  Build.VERSION.SDK_INT >= 34 -> arrayOf(
+                      Manifest.permission.READ_MEDIA_IMAGES,
+                      Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED
+                  )
+                  Build.VERSION.SDK_INT >= 33 -> arrayOf(Manifest.permission.READ_MEDIA_IMAGES)
+                  else -> arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+              }
+
+              private fun hasPhotoAccess(): Boolean = photoPermissions().any {
+                  ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED
+              }
+
+              private fun loadPhotos() {
+                  io.execute {
+                      val found = ArrayList<Long>()
+                      try {
+                          contentResolver.query(
+                              MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                              arrayOf(MediaStore.Images.Media._ID),
+                              null, null,
+                              "${MediaStore.Images.Media.DATE_ADDED} DESC"
+                          )?.use { c ->
+                              val col = c.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
+                              while (c.moveToNext()) found.add(c.getLong(col))
+                          }
+                      } catch (_: Exception) {
+                      }
+                      runOnUiThread {
+                          ids.clear()
+                          ids.addAll(found)
+                          GalleryHolder.ids = found.toLongArray()
+                          adapter.notifyDataSetChanged()
+                      }
+                  }
+              }
+
+              private class Holder(val image: ImageView) : RecyclerView.ViewHolder(image)
+
+              private val adapter = object : RecyclerView.Adapter<Holder>() {
+                  override fun getItemCount() = ids.size
+
+                  override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): Holder {
+                      val view = SquareImageView(parent.context).apply {
+                          scaleType = ImageView.ScaleType.CENTER_CROP
+                          setPadding(2, 2, 2, 2)
+                          setBackgroundColor(0xFF0E1020.toInt())
+                      }
+                      return Holder(view)
+                  }
+
+                  override fun onBindViewHolder(holder: Holder, position: Int) {
+                      val id = ids[position]
+                      holder.image.tag = id
+                      holder.image.setOnClickListener {
+                          GalleryHolder.ids = ids.toLongArray()
+                          startActivity(
+                              Intent(this@MainActivity, SendActivity::class.java)
+                                  .putExtra(SendActivity.EXTRA_GALLERY_INDEX, holder.bindingAdapterPosition)
+                          )
+                      }
+                      val cached = cache.get(id)
+                      if (cached != null) {
+                          holder.image.setImageBitmap(cached)
+                          return
+                      }
+                      holder.image.setImageDrawable(null)
+                      io.execute {
+                          val bmp = try {
+                              contentResolver.loadThumbnail(
+                                  ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id),
+                                  Size(320, 320), null
+                              )
+                          } catch (_: Exception) {
+                              null
+                          }
+                          if (bmp != null) {
+                              cache.put(id, bmp)
+                              runOnUiThread { if (holder.image.tag == id) holder.image.setImageBitmap(bmp) }
+                          }
+                      }
+                  }
+              }
+          }
+
+          /** Case carrée de la grille. */
+          class SquareImageView @JvmOverloads constructor(
+              context: Context,
+              attrs: AttributeSet? = null
+          ) : ImageView(context, attrs) {
+              override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+                  super.onMeasure(widthMeasureSpec, widthMeasureSpec)
+              }
+          }
+          FLOWSHARE_EOF
+
+      - name: "Fichier app/src/main/java/com/flowshare/app/MediaUtils.kt"
+        run: |
+          mkdir -p "FlowShare/app/src/main/java/com/flowshare/app"
+          cat > "FlowShare/app/src/main/java/com/flowshare/app/MediaUtils.kt" <<'FLOWSHARE_EOF'
+          package com.flowshare.app
+
+          import android.content.ContentValues
+          import android.content.Context
+          import android.graphics.Bitmap
+          import android.graphics.ImageDecoder
+          import android.net.Uri
+          import android.os.Environment
+          import android.os.ParcelFileDescriptor
+          import android.provider.MediaStore
+          import android.provider.OpenableColumns
+          import java.io.FileInputStream
+          import java.io.IOException
+
+          object MediaUtils {
+
+              data class Meta(val name: String, val mime: String, val size: Long)
+
+              fun queryMeta(context: Context, uri: Uri): Meta {
+                  var name = "photo_${System.currentTimeMillis()}.jpg"
+                  var size = -1L
+                  try {
+                      context.contentResolver.query(
+                          uri, arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE), null, null, null
+                      )?.use { c ->
+                          if (c.moveToFirst()) {
+                              val ni = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                              if (ni >= 0 && !c.isNull(ni)) name = c.getString(ni)
+                              val si = c.getColumnIndex(OpenableColumns.SIZE)
+                              if (si >= 0 && !c.isNull(si)) size = c.getLong(si)
+                          }
+                      }
+                  } catch (_: Exception) {
+                  }
+                  val mime = context.contentResolver.getType(uri) ?: "image/jpeg"
+                  return Meta(name, mime, size)
+              }
+
+              /** Charge une image réduite pour l'affichage (évite de saturer la mémoire). */
+              fun loadBitmap(context: Context, uri: Uri, maxDim: Int = 2048): Bitmap? = try {
+                  val source = ImageDecoder.createSource(context.contentResolver, uri)
+                  ImageDecoder.decodeBitmap(source) { decoder, info, _ ->
+                      val w = info.size.width
+                      val h = info.size.height
+                      val scale = maxOf(w, h).toFloat() / maxDim
+                      if (scale > 1f) {
+                          decoder.setTargetSize(
+                              (w / scale).toInt().coerceAtLeast(1),
+                              (h / scale).toInt().coerceAtLeast(1)
+                          )
+                      }
+                      decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+                  }
+              } catch (_: Exception) {
+                  null
+              }
+
+              /** Copie le fichier reçu dans Galerie › Pictures/FlowShare. */
+              fun saveToGallery(context: Context, pfd: ParcelFileDescriptor, meta: Meta): Uri? {
+                  val resolver = context.contentResolver
+                  val mime = if (meta.mime.startsWith("image/")) meta.mime else "image/jpeg"
+                  val values = ContentValues().apply {
+                      put(MediaStore.Images.Media.DISPLAY_NAME, meta.name)
+                      put(MediaStore.Images.Media.MIME_TYPE, mime)
+                      put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/FlowShare")
+                      put(MediaStore.Images.Media.IS_PENDING, 1)
+                  }
+                  val collection = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+                  val uri = resolver.insert(collection, values) ?: run { pfd.close(); return null }
+                  return try {
+                      FileInputStream(pfd.fileDescriptor).use { input ->
+                          val out = resolver.openOutputStream(uri) ?: throw IOException("Pas de flux de sortie")
+                          out.use { input.copyTo(it) }
+                      }
+                      values.clear()
+                      values.put(MediaStore.Images.Media.IS_PENDING, 0)
+                      resolver.update(uri, values, null, null)
+                      uri
+                  } catch (_: Exception) {
+                      resolver.delete(uri, null, null)
+                      null
+                  } finally {
+                      try { pfd.close() } catch (_: Exception) {}
+                  }
+              }
+          }
+          FLOWSHARE_EOF
+
+      - name: "Fichier app/src/main/java/com/flowshare/app/NfcModes.kt"
+        run: |
+          mkdir -p "FlowShare/app/src/main/java/com/flowshare/app"
+          cat > "FlowShare/app/src/main/java/com/flowshare/app/NfcModes.kt" <<'FLOWSHARE_EOF'
+          package com.flowshare.app
+
+          import android.app.Activity
+          import android.content.ComponentName
+          import android.nfc.NfcAdapter
+          import android.nfc.cardemulation.CardEmulation
+          import android.os.Build
+
+          /**
+           * Réglages NFC pendant que l'écran d'envoi est affiché :
+           *  - notre service est prioritaire pour répondre,
+           *  - (Android 15+) le téléphone qui envoie arrête de "lire" pour ne faire que "répondre",
+           *    ce qui évite que les deux téléphones essaient de se lire en même temps.
+           */
+          object NfcModes {
+
+              fun enterSendMode(activity: Activity) {
+                  val adapter = NfcAdapter.getDefaultAdapter(activity) ?: return
+                  try {
+                      CardEmulation.getInstance(adapter).setPreferredService(
+                          activity, ComponentName(activity, FlowHceService::class.java)
+                      )
+                  } catch (_: Throwable) {
+                  }
+                  if (Build.VERSION.SDK_INT >= 35) {
+                      try {
+                          val cls = NfcAdapter::class.java
+                          val readerDisable = cls.getField("FLAG_READER_DISABLE").getInt(null)
+                          val listenKeep = cls.getField("FLAG_LISTEN_KEEP").getInt(null)
+                          cls.getMethod(
+                              "setDiscoveryTechnology",
+                              Activity::class.java,
+                              Int::class.javaPrimitiveType,
+                              Int::class.javaPrimitiveType
+                          ).invoke(adapter, activity, readerDisable, listenKeep)
+                      } catch (_: Throwable) {
+                      }
+                  }
+              }
+
+              fun exitSendMode(activity: Activity) {
+                  val adapter = NfcAdapter.getDefaultAdapter(activity) ?: return
+                  try {
+                      CardEmulation.getInstance(adapter).unsetPreferredService(activity)
+                  } catch (_: Throwable) {
+                  }
+                  if (Build.VERSION.SDK_INT >= 35) {
+                      try {
+                          NfcAdapter::class.java
+                              .getMethod("resetDiscoveryTechnology", Activity::class.java)
+                              .invoke(adapter, activity)
+                      } catch (_: Throwable) {
+                      }
+                  }
+              }
+          }
+          FLOWSHARE_EOF
+
+      - name: "Fichier app/src/main/java/com/flowshare/app/Permissions.kt"
+        run: |
+          mkdir -p "FlowShare/app/src/main/java/com/flowshare/app"
+          cat > "FlowShare/app/src/main/java/com/flowshare/app/Permissions.kt" <<'FLOWSHARE_EOF'
+          package com.flowshare.app
+
+          import android.Manifest
+          import android.content.Context
+          import android.content.pm.PackageManager
+          import android.os.Build
+          import androidx.core.content.ContextCompat
+
+          /** Autorisations demandées par Nearby Connections selon la version d'Android. */
+          object Permissions {
+
+              fun required(): Array<String> = when {
+                  Build.VERSION.SDK_INT >= 33 -> arrayOf(
+                      Manifest.permission.BLUETOOTH_SCAN,
+                      Manifest.permission.BLUETOOTH_ADVERTISE,
+                      Manifest.permission.BLUETOOTH_CONNECT,
+                      Manifest.permission.NEARBY_WIFI_DEVICES
+                  )
+                  Build.VERSION.SDK_INT >= 31 -> arrayOf(
+                      Manifest.permission.BLUETOOTH_SCAN,
+                      Manifest.permission.BLUETOOTH_ADVERTISE,
+                      Manifest.permission.BLUETOOTH_CONNECT,
+                      Manifest.permission.ACCESS_FINE_LOCATION
+                  )
+                  else -> arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
+              }
+
+              fun allGranted(context: Context): Boolean = required().all {
+                  ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
+              }
+          }
+          FLOWSHARE_EOF
+
+      - name: "Fichier app/src/main/java/com/flowshare/app/Prefs.kt"
+        run: |
+          mkdir -p "FlowShare/app/src/main/java/com/flowshare/app"
+          cat > "FlowShare/app/src/main/java/com/flowshare/app/Prefs.kt" <<'FLOWSHARE_EOF'
+          package com.flowshare.app
+
+          import android.content.Context
+
+          object Prefs {
+              private const val FILE = "flowshare"
+              private const val KEY_RSSI = "rssi_threshold"
+              const val DEFAULT_RSSI = -45
+              const val MIN_RSSI = -75
+              const val MAX_RSSI = -25
+
+              @Volatile
+              private var cached: Int? = null
+
+              /** Signal Bluetooth minimum (dBm) pour considérer que les téléphones se touchent. */
+              fun rssiThreshold(context: Context): Int =
+                  cached ?: context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+                      .getInt(KEY_RSSI, DEFAULT_RSSI).also { cached = it }
+
+              fun setRssiThreshold(context: Context, value: Int) {
+                  cached = value
+                  context.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit().putInt(KEY_RSSI, value).apply()
+              }
+          }
+          FLOWSHARE_EOF
+
+      - name: "Fichier app/src/main/java/com/flowshare/app/ReceiveActivity.kt"
+        run: |
+          mkdir -p "FlowShare/app/src/main/java/com/flowshare/app"
+          cat > "FlowShare/app/src/main/java/com/flowshare/app/ReceiveActivity.kt" <<'FLOWSHARE_EOF'
+          package com.flowshare.app
+
+          import android.animation.ValueAnimator
+          import android.content.Intent
+          import android.graphics.RenderEffect
+          import android.graphics.Shader
+          import android.net.Uri
+          import android.nfc.NdefMessage
+          import android.nfc.NdefRecord
+          import android.nfc.NfcAdapter
+          import android.os.Build
+          import android.os.Bundle
+          import android.os.Handler
+          import android.os.Looper
+          import android.os.Parcelable
+          import android.view.View
+          import android.view.animation.OvershootInterpolator
+          import android.widget.Button
+          import android.widget.FrameLayout
+          import android.widget.ImageView
+          import android.widget.ProgressBar
+          import android.widget.TextView
+          import androidx.activity.ComponentActivity
+          import androidx.activity.result.contract.ActivityResultContracts
+          import com.google.android.gms.nearby.Nearby
+          import com.google.android.gms.nearby.connection.ConnectionInfo
+          import com.google.android.gms.nearby.connection.ConnectionLifecycleCallback
+          import com.google.android.gms.nearby.connection.ConnectionResolution
+          import com.google.android.gms.nearby.connection.DiscoveredEndpointInfo
+          import com.google.android.gms.nearby.connection.DiscoveryOptions
+          import com.google.android.gms.nearby.connection.EndpointDiscoveryCallback
+          import com.google.android.gms.nearby.connection.Payload
+          import com.google.android.gms.nearby.connection.PayloadCallback
+          import com.google.android.gms.nearby.connection.PayloadTransferUpdate
+          import com.google.android.gms.nearby.connection.Strategy
+          import org.json.JSONObject
+          import java.util.concurrent.Executors
+
+          /**
+           * Ouvert automatiquement par Android quand on approche un téléphone qui envoie
+           * (même si FlowShare était fermé). Retrouve l'expéditeur via Nearby, reçoit la photo,
+           * l'enregistre dans la Galerie et la fait "couler" depuis le bord de l'écran.
+           */
+          class ReceiveActivity : ComponentActivity() {
+
+              private lateinit var glow: GlowEdgeView
+              private lateinit var card: FrameLayout
+              private lateinit var image: ImageView
+              private lateinit var status: TextView
+              private lateinit var progress: ProgressBar
+              private lateinit var buttons: View
+              private lateinit var btnOpen: Button
+
+              private var token: String? = null
+              private var meta: MediaUtils.Meta? = null
+              private var expectedFileId: Long? = null
+              private var savedUri: Uri? = null
+              private var done = false
+              private val files = HashMap<Long, Payload>()
+
+              private val handler = Handler(Looper.getMainLooper())
+              private val io = Executors.newSingleThreadExecutor()
+              private val client by lazy { Nearby.getConnectionsClient(this) }
+              private val timeout = Runnable { fail(getString(R.string.recv_timeout)) }
+
+              private val askPermissions =
+                  registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+                      val t = token
+                      if (Permissions.allGranted(this) && t != null) startDiscovery(t)
+                  }
+
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  setContentView(R.layout.activity_receive)
+                  glow = findViewById(R.id.glow)
+                  card = findViewById(R.id.card)
+                  image = findViewById(R.id.image)
+                  status = findViewById(R.id.status)
+                  progress = findViewById(R.id.progress)
+                  buttons = findViewById(R.id.buttons)
+                  btnOpen = findViewById(R.id.btnOpen)
+                  card.clipToOutline = true
+                  findViewById<Button>(R.id.btnClose).setOnClickListener { finish() }
+                  handle(intent)
+              }
+
+              override fun onNewIntent(intent: Intent) {
+                  super.onNewIntent(intent)
+                  handle(intent)
+              }
+
+              override fun onDestroy() {
+                  super.onDestroy()
+                  handler.removeCallbacksAndMessages(null)
+                  try {
+                      client.stopDiscovery()
+                      client.stopAllEndpoints()
+                  } catch (_: Exception) {
+                  }
+                  io.shutdown()
+              }
+
+              private fun handle(intent: Intent?) {
+                  val t = parseToken(intent) ?: run { if (token == null) finish(); return }
+                  if (t == token) return
+                  // Nouvelle réception : on repart de zéro.
+                  try {
+                      client.stopDiscovery()
+                      client.stopAllEndpoints()
+                  } catch (_: Exception) {
+                  }
+                  token = t
+                  meta = null
+                  expectedFileId = null
+                  savedUri = null
+                  done = false
+                  files.clear()
+                  card.visibility = View.INVISIBLE
+                  buttons.visibility = View.INVISIBLE
+                  progress.visibility = View.VISIBLE
+                  progress.isIndeterminate = true
+
+                  glow.setIntensity(1f)
+                  glow.startPulse()
+
+                  if (Permissions.allGranted(this)) {
+                      startDiscovery(t)
+                  } else {
+                      status.text = getString(R.string.recv_perm)
+                      buttons.visibility = View.VISIBLE
+                      btnOpen.visibility = View.VISIBLE
+                      btnOpen.text = getString(R.string.btn_allow)
+                      btnOpen.setOnClickListener { askPermissions.launch(Permissions.required()) }
+                  }
+              }
+
+              private fun parseToken(intent: Intent?): String? {
+                  // Ouvert par le Bluetooth (service d'accessibilité)
+                  intent?.getStringExtra(ShareSession.EXTRA_TOKEN)?.let { return it }
+                  // Ouvert par le NFC
+                  if (intent?.action != NfcAdapter.ACTION_NDEF_DISCOVERED) return null
+                  val raw: Array<out Parcelable>? =
+                      if (Build.VERSION.SDK_INT >= 33)
+                          intent.getParcelableArrayExtra(NfcAdapter.EXTRA_NDEF_MESSAGES, NdefMessage::class.java)
+                      else @Suppress("DEPRECATION") intent.getParcelableArrayExtra(NfcAdapter.EXTRA_NDEF_MESSAGES)
+                  raw?.forEach { msg ->
+                      (msg as? NdefMessage)?.records?.forEach { rec ->
+                          if (rec.tnf == NdefRecord.TNF_MIME_MEDIA &&
+                              String(rec.type, Charsets.US_ASCII) == ShareSession.MIME_TOKEN
+                          ) {
+                              return String(rec.payload, Charsets.UTF_8)
+                          }
+                      }
+                  }
+                  return null
+              }
+
+              // ---------- Nearby ----------
+
+              private fun startDiscovery(t: String) {
+                  buttons.visibility = View.INVISIBLE
+                  status.text = getString(R.string.recv_waiting)
+                  handler.removeCallbacks(timeout)
+                  handler.postDelayed(timeout, 20_000)
+                  val options = DiscoveryOptions.Builder().setStrategy(Strategy.P2P_POINT_TO_POINT).build()
+                  client.startDiscovery(ShareSession.SERVICE_ID, discoveryCallback, options)
+                      .addOnFailureListener { e -> fail(getString(R.string.nearby_error, e.message ?: "?")) }
+              }
+
+              private val discoveryCallback = object : EndpointDiscoveryCallback() {
+                  override fun onEndpointFound(id: String, info: DiscoveredEndpointInfo) {
+                      val t = token ?: return
+                      if (info.endpointName != ShareSession.senderName(t)) return
+                      client.stopDiscovery()
+                      client.requestConnection(ShareSession.receiverName(t), id, lifecycleCallback)
+                          .addOnFailureListener { e -> fail(getString(R.string.nearby_error, e.message ?: "?")) }
+                  }
+
+                  override fun onEndpointLost(id: String) {}
+              }
+
+              private val lifecycleCallback = object : ConnectionLifecycleCallback() {
+                  override fun onConnectionInitiated(id: String, info: ConnectionInfo) {
+                      client.acceptConnection(id, payloadCallback)
+                  }
+
+                  override fun onConnectionResult(id: String, resolution: ConnectionResolution) {
+                      if (resolution.status.isSuccess) status.text = getString(R.string.recv_connected)
+                      else fail(getString(R.string.recv_error))
+                  }
+
+                  override fun onDisconnected(id: String) {
+                      if (!done) fail(getString(R.string.recv_error))
+                  }
+              }
+
+              private val payloadCallback = object : PayloadCallback() {
+                  override fun onPayloadReceived(id: String, payload: Payload) {
+                      when (payload.type) {
+                          Payload.Type.BYTES -> {
+                              val bytes = payload.asBytes() ?: return
+                              try {
+                                  val json = JSONObject(String(bytes, Charsets.UTF_8))
+                                  meta = MediaUtils.Meta(
+                                      json.optString("name", "photo_${System.currentTimeMillis()}.jpg"),
+                                      json.optString("mime", "image/jpeg"),
+                                      json.optLong("size", -1L)
+                                  )
+                                  expectedFileId = json.optLong("payloadId")
+                              } catch (_: Exception) {
+                              }
+                          }
+                          Payload.Type.FILE -> files[payload.id] = payload
+                      }
+                  }
+
+                  override fun onPayloadTransferUpdate(id: String, update: PayloadTransferUpdate) {
+                      val expected = expectedFileId
+                      val isFile = files.containsKey(update.payloadId) || update.payloadId == expected
+                      if (!isFile) return
+                      when (update.status) {
+                          PayloadTransferUpdate.Status.IN_PROGRESS -> {
+                              if (update.totalBytes > 0) {
+                                  progress.isIndeterminate = false
+                                  progress.progress = (100 * update.bytesTransferred / update.totalBytes).toInt()
+                              }
+                          }
+                          PayloadTransferUpdate.Status.SUCCESS -> {
+                              val payload = files.remove(update.payloadId) ?: return
+                              handler.removeCallbacks(timeout)
+                              saveAndShow(id, payload)
+                          }
+                          PayloadTransferUpdate.Status.FAILURE,
+                          PayloadTransferUpdate.Status.CANCELED -> fail(getString(R.string.recv_error))
+                      }
+                  }
+              }
+
+              private fun saveAndShow(endpointId: String, payload: Payload) {
+                  done = true
+                  val pfd = payload.asFile()?.asParcelFileDescriptor() ?: return fail(getString(R.string.recv_error))
+                  val m = meta ?: MediaUtils.Meta("photo_${System.currentTimeMillis()}.jpg", "image/jpeg", -1L)
+                  io.execute {
+                      val uri = MediaUtils.saveToGallery(this, pfd, m)
+                      val bitmap = uri?.let { MediaUtils.loadBitmap(this, it) }
+                      runOnUiThread {
+                          client.disconnectFromEndpoint(endpointId)
+                          if (uri == null || bitmap == null) {
+                              fail(getString(R.string.recv_error))
+                          } else {
+                              savedUri = uri
+                              image.setImageBitmap(bitmap)
+                              playArrival(uri, m.mime)
+                          }
+                      }
+                  }
+              }
+
+              // ---------- Animation d'arrivée ----------
+
+              private fun playArrival(uri: Uri, mime: String) {
+                  progress.visibility = View.INVISIBLE
+                  val drop = resources.displayMetrics.heightPixels * 0.6f
+                  card.visibility = View.VISIBLE
+                  card.translationY = -drop
+                  card.scaleX = 0.7f
+                  card.scaleY = 0.7f
+                  card.alpha = 0f
+                  card.animate()
+                      .translationY(0f).scaleX(1f).scaleY(1f).alpha(1f)
+                      .setInterpolator(OvershootInterpolator(0.8f))
+                      .setDuration(700)
+                      .start()
+
+                  // Flou → net pendant l'arrivée (Android 12+)
+                  if (Build.VERSION.SDK_INT >= 31) {
+                      ValueAnimator.ofFloat(40f, 0.1f).apply {
+                          duration = 700
+                          addUpdateListener {
+                              val r = it.animatedValue as Float
+                              card.setRenderEffect(RenderEffect.createBlurEffect(r, r, Shader.TileMode.CLAMP))
+                          }
+                          doOnEndCompat { card.setRenderEffect(null) }
+                          start()
+                      }
+                  }
+
+                  glow.stopPulse()
+                  glow.setIntensity(0.35f, 900)
+                  status.text = getString(R.string.recv_done)
+                  buttons.visibility = View.VISIBLE
+                  btnOpen.visibility = View.VISIBLE
+                  btnOpen.text = getString(R.string.btn_open)
+                  btnOpen.setOnClickListener {
+                      val view = Intent(Intent.ACTION_VIEW)
+                          .setDataAndType(uri, mime)
+                          .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                      try {
+                          startActivity(view)
+                      } catch (_: Exception) {
+                      }
+                  }
+              }
+
+              private fun fail(message: String) {
+                  handler.removeCallbacks(timeout)
+                  try {
+                      client.stopDiscovery()
+                      client.stopAllEndpoints()
+                  } catch (_: Exception) {
+                  }
+                  glow.stopPulse()
+                  glow.setIntensity(0f)
+                  progress.visibility = View.INVISIBLE
+                  status.text = message
+                  buttons.visibility = View.VISIBLE
+                  btnOpen.visibility = View.GONE
+              }
+
+              private inline fun ValueAnimator.doOnEndCompat(crossinline action: () -> Unit) {
+                  addListener(object : android.animation.AnimatorListenerAdapter() {
+                      override fun onAnimationEnd(animation: android.animation.Animator) = action()
+                  })
+              }
+          }
+          FLOWSHARE_EOF
+
+      - name: "Fichier app/src/main/java/com/flowshare/app/SendActivity.kt"
+        run: |
+          mkdir -p "FlowShare/app/src/main/java/com/flowshare/app"
+          cat > "FlowShare/app/src/main/java/com/flowshare/app/SendActivity.kt" <<'FLOWSHARE_EOF'
+          package com.flowshare.app
+
+          import android.content.ContentUris
+          import android.content.Intent
+          import android.net.Uri
+          import android.os.Build
+          import android.os.Bundle
+          import android.os.Handler
+          import android.os.Looper
+          import android.provider.MediaStore
+          import android.view.GestureDetector
+          import android.view.MotionEvent
+          import android.view.View
+          import android.view.animation.AccelerateInterpolator
+          import android.widget.Button
+          import android.widget.ImageView
+          import android.widget.ProgressBar
+          import android.widget.TextView
+          import androidx.activity.ComponentActivity
+          import androidx.activity.result.PickVisualMediaRequest
+          import androidx.activity.result.contract.ActivityResultContracts
+          import androidx.lifecycle.Lifecycle
+          import kotlin.math.abs
+
+          /**
+           * La visionneuse de photo. Trois façons d'arriver ici :
+           *  - depuis la galerie FlowShare (swipe gauche/droite entre les photos),
+           *  - via "Partager › FlowShare" ou "Ouvrir avec" depuis une autre app,
+           *  - automatiquement depuis la Galerie Samsung, quand le service d'accessibilité
+           *    a appuyé sur Partager à ta place : l'envoi part tout de suite (mode auto).
+           *
+           * Tant qu'elle est affichée, coller un autre téléphone envoie la photo.
+           */
+          class SendActivity : ComponentActivity(), SenderEngine.Listener {
+
+              private lateinit var photo: ImageView
+              private lateinit var scrim: View
+              private lateinit var glow: GlowEdgeView
+              private lateinit var status: TextView
+              private lateinit var progress: ProgressBar
+              private lateinit var btnChange: Button
+
+              private var photoUri: Uri? = null
+              private var auto = false
+              private var galleryIndex = -1
+              private var askedPermissions = false
+              private val handler = Handler(Looper.getMainLooper())
+
+              private val pickPhoto =
+                  registerForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+                      if (uri != null) showPhoto(uri) else if (photoUri == null) finish()
+                  }
+
+              private val askPermissions =
+                  registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+                      if (Permissions.allGranted(this)) armIfPossible()
+                      else status.text = getString(R.string.status_perm_missing)
+                  }
+
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  setContentView(R.layout.activity_send)
+                  photo = findViewById(R.id.photo)
+                  scrim = findViewById(R.id.scrim)
+                  glow = findViewById(R.id.glow)
+                  status = findViewById(R.id.status)
+                  progress = findViewById(R.id.progress)
+                  btnChange = findViewById(R.id.btnChange)
+                  btnChange.setOnClickListener { launchPicker() }
+
+                  val gestures = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
+                      override fun onDown(e: MotionEvent): Boolean = true
+                      override fun onFling(e1: MotionEvent?, e2: MotionEvent, vx: Float, vy: Float): Boolean {
+                          if (abs(vx) > abs(vy) && abs(vx) > 600) {
+                              step(if (vx < 0) 1 else -1)
+                              return true
+                          }
+                          return false
+                      }
+                  })
+                  photo.setOnTouchListener { _, ev -> gestures.onTouchEvent(ev) }
+
+                  handleIntent(intent, allowPicker = savedInstanceState == null)
+              }
+
+              override fun onNewIntent(intent: Intent) {
+                  super.onNewIntent(intent)
+                  handleIntent(intent, allowPicker = false)
+              }
+
+              override fun onResume() {
+                  super.onResume()
+                  SenderEngine.addListener(this)
+                  if (auto) {
+                      render(SenderEngine.state, 0f, null)
+                  } else {
+                      NfcModes.enterSendMode(this)
+                      armIfPossible()
+                  }
+              }
+
+              override fun onPause() {
+                  super.onPause()
+                  SenderEngine.removeListener(this)
+                  if (!auto) {
+                      NfcModes.exitSendMode(this)
+                      SenderEngine.disarm(SenderEngine.Source.IN_APP)
+                  }
+              }
+
+              override fun onDestroy() {
+                  super.onDestroy()
+                  handler.removeCallbacksAndMessages(null)
+              }
+
+              // ---------- Entrées ----------
+
+              private fun handleIntent(intent: Intent?, allowPicker: Boolean) {
+                  val index = intent?.getIntExtra(EXTRA_GALLERY_INDEX, -1) ?: -1
+                  if (index >= 0 && index < GalleryHolder.ids.size) {
+                      auto = false
+                      galleryIndex = index
+                      btnChange.visibility = View.GONE
+                      showPhoto(uriForId(GalleryHolder.ids[index]))
+                      return
+                  }
+
+                  val uri = extractUri(intent)
+                  if (uri != null) {
+                      galleryIndex = -1
+                      if (SenderEngine.awaitingGalleryUri) {
+                          // Partage déclenché par le service d'accessibilité : on envoie directement.
+                          auto = true
+                          btnChange.visibility = View.GONE
+                          showPhoto(uri)
+                          SenderEngine.provideUri(uri)
+                          render(SenderEngine.state, 0f, null)
+                      } else {
+                          auto = false
+                          btnChange.visibility = View.VISIBLE
+                          showPhoto(uri)
+                      }
+                      return
+                  }
+                  if (allowPicker) launchPicker()
+              }
+
+              private fun extractUri(intent: Intent?): Uri? = when (intent?.action) {
+                  Intent.ACTION_SEND ->
+                      if (Build.VERSION.SDK_INT >= 33) intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+                      else @Suppress("DEPRECATION") intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
+                  Intent.ACTION_VIEW -> intent.data
+                  else -> null
+              }
+
+              private fun launchPicker() {
+                  pickPhoto.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+              }
+
+              private fun uriForId(id: Long): Uri =
+                  ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id)
+
+              private fun showPhoto(uri: Uri) {
+                  photoUri = uri
+                  photo.setImageBitmap(MediaUtils.loadBitmap(this, uri))
+                  resetVisuals()
+                  if (!auto && lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
+                      if (SenderEngine.state == SenderEngine.State.ARMED && SenderEngine.source == SenderEngine.Source.IN_APP) {
+                          SenderEngine.provideUri(uri)
+                      } else {
+                          armIfPossible()
+                      }
+                  }
+              }
+
+              /** Swipe entre les photos de la galerie FlowShare. */
+              private fun step(delta: Int) {
+                  if (galleryIndex < 0 || SenderEngine.isBusy) return
+                  val next = galleryIndex + delta
+                  if (next < 0 || next >= GalleryHolder.ids.size) return
+                  galleryIndex = next
+                  val out = if (delta > 0) -photo.width.toFloat() else photo.width.toFloat()
+                  photo.animate().translationX(out).alpha(0f).setDuration(120).withEndAction {
+                      showPhoto(uriForId(GalleryHolder.ids[next]))
+                      photo.translationX = -out
+                      photo.animate().translationX(0f).alpha(1f).setDuration(160).start()
+                  }.start()
+              }
+
+              private fun armIfPossible() {
+                  val uri = photoUri ?: return
+                  if (!Permissions.allGranted(this)) {
+                      if (!askedPermissions) {
+                          askedPermissions = true
+                          askPermissions.launch(Permissions.required())
+                      } else {
+                          status.text = getString(R.string.status_perm_missing)
+                      }
+                      return
+                  }
+                  if (SenderEngine.state == SenderEngine.State.IDLE || SenderEngine.state == SenderEngine.State.ARMED) {
+                      SenderEngine.arm(uri, SenderEngine.Source.IN_APP)
+                  }
+              }
+
+              // ---------- Animations ----------
+
+              override fun onEngineUpdate(state: SenderEngine.State, progress: Float, message: String?) {
+                  render(state, progress, message)
+              }
+
+              private fun render(state: SenderEngine.State, fraction: Float, message: String?) {
+                  when (state) {
+                      SenderEngine.State.IDLE -> {
+                          if (!auto) {
+                              resetVisuals()
+                              if (lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) armIfPossible()
+                          }
+                      }
+                      SenderEngine.State.ARMED -> if (!auto) resetVisuals()
+                      SenderEngine.State.CONNECTING -> touchedVisuals(indeterminate = true)
+                      SenderEngine.State.SENDING -> {
+                          touchedVisuals(indeterminate = false)
+                          progress.progress = (fraction * 100).toInt()
+                          // La photo glisse vers le bord en contact pendant le transfert.
+                          photo.translationY = -fraction * photo.height * 0.5f
+                          photo.alpha = 1f - 0.5f * fraction
+                          status.text = getString(R.string.send_sending)
+                      }
+                      SenderEngine.State.DONE -> {
+                          sentVisuals()
+                          if (auto) handler.postDelayed({ finish() }, 1400)
+                      }
+                      SenderEngine.State.FAILED -> {
+                          resetVisuals()
+                          status.text = message ?: getString(R.string.send_error)
+                          if (auto) handler.postDelayed({ finish() }, 2200)
+                      }
+                  }
+              }
+
+              private fun touchedVisuals(indeterminate: Boolean) {
+                  if (scrim.alpha < 0.5f) {
+                      scrim.animate().alpha(0.55f).setDuration(400).start()
+                      photo.animate().scaleX(0.86f).scaleY(0.86f).setDuration(400).start()
+                      glow.setIntensity(1f)
+                      glow.startPulse()
+                  }
+                  status.text = getString(R.string.send_touch)
+                  progress.visibility = View.VISIBLE
+                  progress.isIndeterminate = indeterminate
+              }
+
+              private fun sentVisuals() {
+                  status.text = getString(R.string.send_done)
+                  progress.isIndeterminate = false
+                  progress.progress = 100
+                  photo.animate()
+                      .translationY(-photo.height * 1.2f)
+                      .alpha(0f)
+                      .setInterpolator(AccelerateInterpolator())
+                      .setDuration(350)
+                      .start()
+                  glow.stopPulse()
+                  glow.setIntensity(0f, 900)
+              }
+
+              private fun resetVisuals() {
+                  photo.animate().cancel()
+                  photo.translationY = 0f
+                  photo.translationX = 0f
+                  photo.alpha = 1f
+                  photo.scaleX = 1f
+                  photo.scaleY = 1f
+                  scrim.animate().alpha(0f).setDuration(250).start()
+                  glow.stopPulse()
+                  glow.setIntensity(0f, 250)
+                  progress.visibility = View.INVISIBLE
+                  progress.progress = 0
+                  status.text = getString(R.string.send_hint)
+              }
+
+              companion object {
+                  const val EXTRA_GALLERY_INDEX = "com.flowshare.app.GALLERY_INDEX"
+              }
+          }
+
+          /** Liste des photos de la galerie FlowShare, partagée avec la visionneuse. */
+          object GalleryHolder {
+              var ids: LongArray = LongArray(0)
+          }
+          FLOWSHARE_EOF
+
+      - name: "Fichier app/src/main/java/com/flowshare/app/SenderEngine.kt"
+        run: |
+          mkdir -p "FlowShare/app/src/main/java/com/flowshare/app"
+          cat > "FlowShare/app/src/main/java/com/flowshare/app/SenderEngine.kt" <<'FLOWSHARE_EOF'
+          package com.flowshare.app
+
+          import android.content.Context
+          import android.net.Uri
+          import android.os.Handler
+          import android.os.Looper
+          import com.google.android.gms.nearby.Nearby
+          import com.google.android.gms.nearby.connection.AdvertisingOptions
+          import com.google.android.gms.nearby.connection.ConnectionInfo
+          import com.google.android.gms.nearby.connection.ConnectionLifecycleCallback
+          import com.google.android.gms.nearby.connection.ConnectionResolution
+          import com.google.android.gms.nearby.connection.Payload
+          import com.google.android.gms.nearby.connection.PayloadCallback
+          import com.google.android.gms.nearby.connection.PayloadTransferUpdate
+          import com.google.android.gms.nearby.connection.Strategy
+          import org.json.JSONObject
+          import java.util.concurrent.CopyOnWriteArraySet
+
+          /**
+           * Le moteur d'envoi, indépendant des écrans : il peut tourner pendant que tu es dans la
+           * Galerie Samsung (porté par le service d'accessibilité) ou dans la galerie FlowShare.
+           *
+           * Cycle : IDLE → ARMED (photo prête, NFC + Bluetooth actifs) → CONNECTING (téléphone collé)
+           *         → SENDING → DONE → IDLE.
+           */
+          object SenderEngine {
+
+              enum class State { IDLE, ARMED, CONNECTING, SENDING, DONE, FAILED }
+              enum class Source { IN_APP, GALLERY }
+
+              fun interface Listener {
+                  fun onEngineUpdate(state: State, progress: Float, message: String?)
+              }
+
+              private lateinit var app: Context
+              private val main = Handler(Looper.getMainLooper())
+              private val listeners = CopyOnWriteArraySet<Listener>()
+
+              var state = State.IDLE
+                  private set
+              var source: Source? = null
+                  private set
+
+              private var token: String? = null
+              private var uri: Uri? = null
+              private var endpointId: String? = null
+              private var filePayloadId: Long? = null
+
+              /** Branché par le service d'accessibilité : appuie sur Partager › FlowShare dans la Galerie. */
+              var shareTrigger: (() -> Unit)? = null
+
+              private val client by lazy { Nearby.getConnectionsClient(app) }
+              private val timeout = Runnable { fail(app.getString(R.string.send_timeout)) }
+
+              fun init(context: Context) {
+                  app = context.applicationContext
+              }
+
+              val isBusy: Boolean
+                  get() = state == State.CONNECTING || state == State.SENDING ||
+                          state == State.DONE || state == State.FAILED
+
+              /** Vrai quand on a été touché depuis la Galerie Samsung et qu'on attend la photo partagée. */
+              val awaitingGalleryUri: Boolean
+                  get() = source == Source.GALLERY && uri == null &&
+                          (state == State.ARMED || state == State.CONNECTING)
+
+              fun addListener(l: Listener) {
+                  listeners.add(l)
+              }
+
+              fun removeListener(l: Listener) {
+                  listeners.remove(l)
+              }
+
+              // ---------- Commandes ----------
+
+              fun arm(photo: Uri?, src: Source): Boolean {
+                  if (isBusy) return false
+                  if (!Permissions.allGranted(app)) return false
+                  if (state == State.ARMED) stopRadios()
+                  val t = ShareSession.start()
+                  token = t
+                  uri = photo
+                  source = src
+                  endpointId = null
+                  filePayloadId = null
+                  setState(State.ARMED)
+
+                  val options = AdvertisingOptions.Builder().setStrategy(Strategy.P2P_POINT_TO_POINT).build()
+                  client.startAdvertising(ShareSession.senderName(t), ShareSession.SERVICE_ID, lifecycleCallback, options)
+                      .addOnFailureListener { /* le NFC et le Bluetooth restent actifs */ }
+                  BleProximity.startAdvertising(app, t)
+                  return true
+              }
+
+              /** Change la photo prête (swipe dans la visionneuse) ou fournit celle partagée par la Galerie. */
+              fun provideUri(photo: Uri) {
+                  if (state != State.ARMED && state != State.CONNECTING) return
+                  uri = photo
+                  trySend()
+              }
+
+              fun disarm(src: Source) {
+                  if (isBusy || source != src) return
+                  stopRadios()
+                  setState(State.IDLE)
+              }
+
+              /** Un autre téléphone vient d'être collé (lecture NFC ou demande de connexion Nearby). */
+              fun onTouched() {
+                  if (state != State.ARMED) return
+                  setState(State.CONNECTING)
+                  main.removeCallbacks(timeout)
+                  main.postDelayed(timeout, 25_000)
+                  if (uri == null) {
+                      val trigger = shareTrigger
+                      if (trigger != null) trigger() else fail(app.getString(R.string.send_error))
+                  }
+              }
+
+              fun fail(message: String) {
+                  main.removeCallbacks(timeout)
+                  stopRadios()
+                  setState(State.FAILED, message = message)
+                  main.postDelayed({ if (state == State.FAILED) setState(State.IDLE) }, 2000)
+              }
+
+              // ---------- Interne ----------
+
+              private fun stopRadios() {
+                  ShareSession.stop()
+                  token = null
+                  endpointId = null
+                  filePayloadId = null
+                  try {
+                      client.stopAdvertising()
+                      client.stopAllEndpoints()
+                  } catch (_: Exception) {
+                  }
+                  BleProximity.stopAdvertising(app)
+              }
+
+              private fun setState(s: State, progress: Float = 0f, message: String? = null) {
+                  state = s
+                  if (s == State.IDLE) {
+                      source = null
+                      uri = null
+                  }
+                  // Diffusion asynchrone pour que chaque écouteur reçoive les états dans l'ordre.
+                  main.post { listeners.forEach { it.onEngineUpdate(s, progress, message) } }
+              }
+
+              private val lifecycleCallback = object : ConnectionLifecycleCallback() {
+                  override fun onConnectionInitiated(id: String, info: ConnectionInfo) {
+                      val t = token
+                      // On n'accepte que le téléphone qui a reçu NOTRE code (NFC ou Bluetooth).
+                      if (t != null && info.endpointName == ShareSession.receiverName(t)) {
+                          client.acceptConnection(id, payloadCallback)
+                          onTouched()
+                      } else {
+                          client.rejectConnection(id)
+                      }
+                  }
+
+                  override fun onConnectionResult(id: String, resolution: ConnectionResolution) {
+                      if (resolution.status.isSuccess) {
+                          endpointId = id
+                          client.stopAdvertising()
+                          BleProximity.stopAdvertising(app)
+                          trySend()
+                      } else {
+                          fail(app.getString(R.string.send_error))
+                      }
+                  }
+
+                  override fun onDisconnected(id: String) {
+                      if (state == State.CONNECTING || state == State.SENDING) fail(app.getString(R.string.send_error))
+                  }
+              }
+
+              private val payloadCallback = object : PayloadCallback() {
+                  override fun onPayloadReceived(id: String, payload: Payload) {}
+
+                  override fun onPayloadTransferUpdate(id: String, update: PayloadTransferUpdate) {
+                      if (update.payloadId != filePayloadId) return
+                      when (update.status) {
+                          PayloadTransferUpdate.Status.IN_PROGRESS -> {
+                              if (update.totalBytes > 0) {
+                                  setState(State.SENDING, update.bytesTransferred.toFloat() / update.totalBytes)
+                              }
+                          }
+                          PayloadTransferUpdate.Status.SUCCESS -> {
+                              main.removeCallbacks(timeout)
+                              setState(State.DONE, 1f)
+                              main.postDelayed({
+                                  if (state == State.DONE) {
+                                      stopRadios()
+                                      setState(State.IDLE)
+                                  }
+                              }, 1800)
+                          }
+                          PayloadTransferUpdate.Status.FAILURE,
+                          PayloadTransferUpdate.Status.CANCELED -> fail(app.getString(R.string.send_error))
+                      }
+                  }
+              }
+
+              private fun trySend() {
+                  val id = endpointId ?: return
+                  val photo = uri ?: return
+                  if (state != State.CONNECTING) return
+                  val meta = MediaUtils.queryMeta(app, photo)
+                  val pfd = try {
+                      app.contentResolver.openFileDescriptor(photo, "r")
+                  } catch (_: Exception) {
+                      null
+                  }
+                  if (pfd == null) {
+                      fail(app.getString(R.string.send_error))
+                      return
+                  }
+                  val filePayload = Payload.fromFile(pfd)
+                  filePayloadId = filePayload.id
+                  val header = JSONObject()
+                      .put("name", meta.name)
+                      .put("mime", meta.mime)
+                      .put("size", meta.size)
+                      .put("payloadId", filePayload.id)
+                      .toString()
+                  setState(State.SENDING, 0f)
+                  client.sendPayload(id, Payload.fromBytes(header.toByteArray(Charsets.UTF_8)))
+                  client.sendPayload(id, filePayload)
+              }
+          }
+          FLOWSHARE_EOF
+
+      - name: "Fichier app/src/main/java/com/flowshare/app/SetupActivity.kt"
+        run: |
+          mkdir -p "FlowShare/app/src/main/java/com/flowshare/app"
+          cat > "FlowShare/app/src/main/java/com/flowshare/app/SetupActivity.kt" <<'FLOWSHARE_EOF'
+          package com.flowshare.app
+
+          import android.content.Context
+          import android.content.Intent
+          import android.net.Uri
+          import android.nfc.NfcAdapter
+          import android.os.Bundle
+          import android.os.Handler
+          import android.os.Looper
+          import android.os.SystemClock
+          import android.provider.Settings
+          import android.view.View
+          import android.widget.Button
+          import android.widget.SeekBar
+          import android.widget.TextView
+          import androidx.activity.ComponentActivity
+          import androidx.activity.result.contract.ActivityResultContracts
+
+          /** Réglages : autorisations, NFC, Bluetooth, accessibilité, sensibilité du rapprochement. */
+          class SetupActivity : ComponentActivity() {
+
+              private lateinit var status: TextView
+              private lateinit var btnPermissions: Button
+              private lateinit var btnNfc: Button
+              private lateinit var btnBluetooth: Button
+              private lateinit var btnAccessibility: Button
+              private lateinit var btnRestricted: Button
+              private lateinit var sensitivityLabel: TextView
+              private lateinit var liveSignal: TextView
+              private lateinit var seek: SeekBar
+
+              private val handler = Handler(Looper.getMainLooper())
+              private val ticker = object : Runnable {
+                  override fun run() {
+                      updateLiveSignal()
+                      handler.postDelayed(this, 500)
+                  }
+              }
+
+              private val askPermissions =
+                  registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { refresh() }
+
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  setContentView(R.layout.activity_setup)
+                  status = findViewById(R.id.status)
+                  btnPermissions = findViewById(R.id.btnPermissions)
+                  btnNfc = findViewById(R.id.btnNfc)
+                  btnBluetooth = findViewById(R.id.btnBluetooth)
+                  btnAccessibility = findViewById(R.id.btnAccessibility)
+                  btnRestricted = findViewById(R.id.btnRestricted)
+                  sensitivityLabel = findViewById(R.id.sensitivityLabel)
+                  liveSignal = findViewById(R.id.liveSignal)
+                  seek = findViewById(R.id.seekSensitivity)
+
+                  btnPermissions.setOnClickListener { askPermissions.launch(Permissions.required()) }
+                  btnNfc.setOnClickListener { open(Settings.ACTION_NFC_SETTINGS) }
+                  btnBluetooth.setOnClickListener { open(Settings.ACTION_BLUETOOTH_SETTINGS) }
+                  btnAccessibility.setOnClickListener { open(Settings.ACTION_ACCESSIBILITY_SETTINGS) }
+                  btnRestricted.setOnClickListener {
+                      open(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))
+                  }
+
+                  // La barre va de "peu sensible" (il faut vraiment coller) à "très sensible".
+                  seek.max = Prefs.MAX_RSSI - Prefs.MIN_RSSI
+                  seek.progress = Prefs.MAX_RSSI - Prefs.rssiThreshold(this)
+                  updateSensitivityLabel()
+                  seek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                      override fun onProgressChanged(bar: SeekBar, value: Int, fromUser: Boolean) {
+                          if (fromUser) {
+                              Prefs.setRssiThreshold(this@SetupActivity, Prefs.MAX_RSSI - value)
+                              updateSensitivityLabel()
+                          }
+                      }
+
+                      override fun onStartTrackingTouch(bar: SeekBar) {}
+                      override fun onStopTrackingTouch(bar: SeekBar) {}
+                  })
+              }
+
+              override fun onResume() {
+                  super.onResume()
+                  refresh()
+                  handler.post(ticker)
+              }
+
+              override fun onPause() {
+                  super.onPause()
+                  handler.removeCallbacks(ticker)
+              }
+
+              private fun open(action: String, target: Uri? = null) {
+                  try {
+                      val intent = Intent(action)
+                      if (target != null) intent.data = target
+                      startActivity(intent)
+                  } catch (_: Exception) {
+                      startActivity(Intent(Settings.ACTION_SETTINGS))
+                  }
+              }
+
+              private fun refresh() {
+                  val nfc = NfcAdapter.getDefaultAdapter(this)
+                  val perms = Permissions.allGranted(this)
+                  val nfcOn = nfc?.isEnabled == true
+                  val btOn = BleProximity.isBluetoothOn(this)
+                  val a11y = FlowAccessibilityService.isEnabled(this)
+
+                  btnPermissions.visibility = if (perms) View.GONE else View.VISIBLE
+                  btnNfc.visibility = if (nfc != null && !nfcOn) View.VISIBLE else View.GONE
+                  btnBluetooth.visibility = if (btOn) View.GONE else View.VISIBLE
+                  btnAccessibility.visibility = if (a11y) View.GONE else View.VISIBLE
+                  btnRestricted.visibility = if (a11y) View.GONE else View.VISIBLE
+
+                  status.text = buildString {
+                      appendLine(line(perms, getString(R.string.check_perms)))
+                      appendLine(
+                          when {
+                              nfc == null -> "✗ " + getString(R.string.check_no_nfc)
+                              else -> line(nfcOn, getString(R.string.check_nfc))
+                          }
+                      )
+                      appendLine(line(btOn, getString(R.string.check_bt)))
+                      append(line(a11y, getString(R.string.check_a11y)))
+                  }
+              }
+
+              private fun line(ok: Boolean, label: String) = (if (ok) "✓ " else "✗ ") + label
+
+              private fun updateSensitivityLabel() {
+                  sensitivityLabel.text = getString(R.string.sensitivity_value, Prefs.rssiThreshold(this))
+              }
+
+              private fun updateLiveSignal() {
+                  val rssi = BleProximity.lastRssi
+                  val age = SystemClock.elapsedRealtime() - BleProximity.lastSeenAt
+                  liveSignal.text = if (rssi != null && age < 3000) {
+                      getString(R.string.live_signal, rssi)
+                  } else {
+                      getString(R.string.live_signal_none)
+                  }
+              }
+
+              companion object {
+                  fun isReady(context: Context): Boolean =
+                      Permissions.allGranted(context) &&
+                              BleProximity.isBluetoothOn(context) &&
+                              FlowAccessibilityService.isEnabled(context)
+              }
+          }
+          FLOWSHARE_EOF
+
+      - name: "Fichier app/src/main/java/com/flowshare/app/ShareSession.kt"
+        run: |
+          mkdir -p "FlowShare/app/src/main/java/com/flowshare/app"
+          cat > "FlowShare/app/src/main/java/com/flowshare/app/ShareSession.kt" <<'FLOWSHARE_EOF'
+          package com.flowshare.app
+
+          import android.os.Handler
+          import android.os.Looper
+          import java.security.SecureRandom
+
+          /**
+           * Code de session partagé entre le moteur d'envoi, le service NFC et le Bluetooth.
+           * Tant qu'un [token] existe, le téléphone "répond" quand on l'approche d'un autre.
+           */
+          object ShareSession {
+              const val MIME_TOKEN = "application/vnd.com.flowshare.token"
+              const val SERVICE_ID = "com.flowshare.app.transfer"
+              const val EXTRA_TOKEN = "com.flowshare.app.TOKEN"
+
+              private const val ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+              private val random = SecureRandom()
+              private val main = Handler(Looper.getMainLooper())
+
+              @Volatile
+              var token: String? = null
+                  private set
+
+              fun start(): String {
+                  val t = buildString { repeat(8) { append(ALPHABET[random.nextInt(ALPHABET.length)]) } }
+                  token = t
+                  return t
+              }
+
+              fun stop() {
+                  token = null
+              }
+
+              /** Appelé par le service NFC quand un autre téléphone vient de nous lire. */
+              fun notifyTouched() {
+                  main.post { SenderEngine.onTouched() }
+              }
+
+              fun senderName(token: String) = "FS-$token"
+              fun receiverName(token: String) = "FSR-$token"
+          }
+          FLOWSHARE_EOF
+
+      - name: "Fichier app/src/main/res/drawable/btn_bg.xml"
+        run: |
+          mkdir -p "FlowShare/app/src/main/res/drawable"
+          cat > "FlowShare/app/src/main/res/drawable/btn_bg.xml" <<'FLOWSHARE_EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <ripple xmlns:android="http://schemas.android.com/apk/res/android" android:color="#33FFFFFF">
+              <item>
+                  <shape android:shape="rectangle">
+                      <corners android:radius="28dp" />
+                      <solid android:color="#6C8CFF" />
+                  </shape>
+              </item>
+          </ripple>
+          FLOWSHARE_EOF
+
+      - name: "Fichier app/src/main/res/drawable/btn_secondary_bg.xml"
+        run: |
+          mkdir -p "FlowShare/app/src/main/res/drawable"
+          cat > "FlowShare/app/src/main/res/drawable/btn_secondary_bg.xml" <<'FLOWSHARE_EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <ripple xmlns:android="http://schemas.android.com/apk/res/android" android:color="#33FFFFFF">
+              <item>
+                  <shape android:shape="rectangle">
+                      <corners android:radius="28dp" />
+                      <solid android:color="#2A2E4A" />
+                  </shape>
+              </item>
+          </ripple>
+          FLOWSHARE_EOF
+
+      - name: "Fichier app/src/main/res/drawable/card_bg.xml"
+        run: |
+          mkdir -p "FlowShare/app/src/main/res/drawable"
+          cat > "FlowShare/app/src/main/res/drawable/card_bg.xml" <<'FLOWSHARE_EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+              <corners android:radius="24dp" />
+              <solid android:color="#1A1D33" />
+          </shape>
+          FLOWSHARE_EOF
+
+      - name: "Fichier app/src/main/res/drawable/ic_launcher_background.xml"
+        run: |
+          mkdir -p "FlowShare/app/src/main/res/drawable"
+          cat > "FlowShare/app/src/main/res/drawable/ic_launcher_background.xml" <<'FLOWSHARE_EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+              <gradient
+                  android:angle="315"
+                  android:endColor="#7B4DFF"
+                  android:startColor="#2BD9C4" />
+          </shape>
+          FLOWSHARE_EOF
+
+      - name: "Fichier app/src/main/res/drawable/ic_launcher_foreground.xml"
+        run: |
+          mkdir -p "FlowShare/app/src/main/res/drawable"
+          cat > "FlowShare/app/src/main/res/drawable/ic_launcher_foreground.xml" <<'FLOWSHARE_EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="108dp"
+              android:height="108dp"
+              android:viewportWidth="108"
+              android:viewportHeight="108">
+              <!-- deux "téléphones" bord à bord avec une vague lumineuse -->
+              <path
+                  android:fillColor="#FFFFFF"
+                  android:pathData="M38,26h32a4,4 0 0 1 4,4v18h-40v-18a4,4 0 0 1 4,-4z" />
+              <path
+                  android:fillColor="#FFFFFF"
+                  android:fillAlpha="0.6"
+                  android:pathData="M34,60h40v18a4,4 0 0 1 -4,4h-32a4,4 0 0 1 -4,-4z" />
+              <path
+                  android:fillColor="#8FD3FF"
+                  android:pathData="M30,52h48v4h-48z" />
+          </vector>
+          FLOWSHARE_EOF
+
+      - name: "Fichier app/src/main/res/layout/activity_main.xml"
+        run: |
+          mkdir -p "FlowShare/app/src/main/res/layout"
+          cat > "FlowShare/app/src/main/res/layout/activity_main.xml" <<'FLOWSHARE_EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+              android:layout_width="match_parent"
+              android:layout_height="match_parent"
+              android:orientation="vertical">
+
+              <LinearLayout
+                  android:layout_width="match_parent"
+                  android:layout_height="64dp"
+                  android:gravity="center_vertical"
+                  android:orientation="horizontal"
+                  android:paddingStart="20dp"
+                  android:paddingEnd="8dp">
+
+                  <TextView
+                      android:layout_width="0dp"
+                      android:layout_height="wrap_content"
+                      android:layout_weight="1"
+                      android:text="@string/main_title"
+                      android:textColor="#FFFFFF"
+                      android:textSize="24sp"
+                      android:textStyle="bold" />
+
+                  <TextView
+                      android:id="@+id/btnSettings"
+                      android:layout_width="48dp"
+                      android:layout_height="48dp"
+                      android:background="?android:attr/selectableItemBackgroundBorderless"
+                      android:contentDescription="@string/settings"
+                      android:gravity="center"
+                      android:text="⚙"
+                      android:textColor="#FFFFFF"
+                      android:textSize="24sp" />
+              </LinearLayout>
+
+              <TextView
+                  android:id="@+id/banner"
+                  android:layout_width="match_parent"
+                  android:layout_height="wrap_content"
+                  android:layout_marginStart="12dp"
+                  android:layout_marginEnd="12dp"
+                  android:layout_marginBottom="8dp"
+                  android:background="@drawable/card_bg"
+                  android:padding="14dp"
+                  android:text="@string/banner_setup"
+                  android:textColor="#FFD58F"
+                  android:textSize="14sp"
+                  android:visibility="gone" />
+
+              <Button
+                  android:id="@+id/btnPhotos"
+                  android:layout_width="match_parent"
+                  android:layout_height="56dp"
+                  android:layout_margin="24dp"
+                  android:background="@drawable/btn_bg"
+                  android:text="@string/btn_photos"
+                  android:textAllCaps="false"
+                  android:textColor="#FFFFFF"
+                  android:visibility="gone" />
+
+              <androidx.recyclerview.widget.RecyclerView
+                  android:id="@+id/grid"
+                  android:layout_width="match_parent"
+                  android:layout_height="0dp"
+                  android:layout_weight="1"
+                  android:clipToPadding="false"
+                  android:paddingBottom="24dp" />
+          </LinearLayout>
+          FLOWSHARE_EOF
+
+      - name: "Fichier app/src/main/res/layout/activity_receive.xml"
+        run: |
+          mkdir -p "FlowShare/app/src/main/res/layout"
+          cat > "FlowShare/app/src/main/res/layout/activity_receive.xml" <<'FLOWSHARE_EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+              android:layout_width="match_parent"
+              android:layout_height="match_parent"
+              android:background="#000000">
+
+              <com.flowshare.app.GlowEdgeView
+                  android:id="@+id/glow"
+                  android:layout_width="match_parent"
+                  android:layout_height="match_parent" />
+
+              <!-- carte de la photo qui "coule" depuis le bord -->
+              <FrameLayout
+                  android:id="@+id/card"
+                  android:layout_width="match_parent"
+                  android:layout_height="wrap_content"
+                  android:layout_gravity="center"
+                  android:layout_marginStart="24dp"
+                  android:layout_marginEnd="24dp"
+                  android:background="@drawable/card_bg"
+                  android:visibility="invisible">
+
+                  <ImageView
+                      android:id="@+id/image"
+                      android:layout_width="match_parent"
+                      android:layout_height="wrap_content"
+                      android:adjustViewBounds="true"
+                      android:contentDescription="@null"
+                      android:maxHeight="520dp"
+                      android:scaleType="fitCenter" />
+              </FrameLayout>
+
+              <LinearLayout
+                  android:layout_width="match_parent"
+                  android:layout_height="wrap_content"
+                  android:layout_gravity="bottom"
+                  android:gravity="center_horizontal"
+                  android:orientation="vertical"
+                  android:padding="24dp">
+
+                  <ProgressBar
+                      android:id="@+id/progress"
+                      style="@android:style/Widget.DeviceDefault.ProgressBar.Horizontal"
+                      android:layout_width="match_parent"
+                      android:layout_height="wrap_content"
+                      android:indeterminate="true" />
+
+                  <TextView
+                      android:id="@+id/status"
+                      android:layout_width="wrap_content"
+                      android:layout_height="wrap_content"
+                      android:layout_marginTop="12dp"
+                      android:gravity="center"
+                      android:text="@string/recv_waiting"
+                      android:textColor="#FFFFFF"
+                      android:textSize="17sp" />
+
+                  <LinearLayout
+                      android:id="@+id/buttons"
+                      android:layout_width="match_parent"
+                      android:layout_height="wrap_content"
+                      android:layout_marginTop="16dp"
+                      android:orientation="horizontal"
+                      android:visibility="invisible">
+
+                      <Button
+                          android:id="@+id/btnClose"
+                          android:layout_width="0dp"
+                          android:layout_height="52dp"
+                          android:layout_marginEnd="8dp"
+                          android:layout_weight="1"
+                          android:background="@drawable/btn_secondary_bg"
+                          android:text="@string/btn_close"
+                          android:textAllCaps="false"
+                          android:textColor="#FFFFFF" />
+
+                      <Button
+                          android:id="@+id/btnOpen"
+                          android:layout_width="0dp"
+                          android:layout_height="52dp"
+                          android:layout_marginStart="8dp"
+                          android:layout_weight="1"
+                          android:background="@drawable/btn_bg"
+                          android:text="@string/btn_open"
+                          android:textAllCaps="false"
+                          android:textColor="#FFFFFF" />
+                  </LinearLayout>
+              </LinearLayout>
+          </FrameLayout>
+          FLOWSHARE_EOF
+
+      - name: "Fichier app/src/main/res/layout/activity_send.xml"
+        run: |
+          mkdir -p "FlowShare/app/src/main/res/layout"
+          cat > "FlowShare/app/src/main/res/layout/activity_send.xml" <<'FLOWSHARE_EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+              android:layout_width="match_parent"
+              android:layout_height="match_parent"
+              android:background="#000000">
+
+              <ImageView
+                  android:id="@+id/photo"
+                  android:layout_width="match_parent"
+                  android:layout_height="match_parent"
+                  android:layout_margin="12dp"
+                  android:contentDescription="@null"
+                  android:scaleType="fitCenter" />
+
+              <!-- voile sombre qui descend sur l'écran pendant l'envoi -->
+              <View
+                  android:id="@+id/scrim"
+                  android:layout_width="match_parent"
+                  android:layout_height="match_parent"
+                  android:alpha="0"
+                  android:background="#000000" />
+
+              <com.flowshare.app.GlowEdgeView
+                  android:id="@+id/glow"
+                  android:layout_width="match_parent"
+                  android:layout_height="match_parent" />
+
+              <LinearLayout
+                  android:layout_width="match_parent"
+                  android:layout_height="wrap_content"
+                  android:layout_gravity="bottom"
+                  android:gravity="center_horizontal"
+                  android:orientation="vertical"
+                  android:padding="24dp">
+
+                  <ProgressBar
+                      android:id="@+id/progress"
+                      style="@android:style/Widget.DeviceDefault.ProgressBar.Horizontal"
+                      android:layout_width="match_parent"
+                      android:layout_height="wrap_content"
+                      android:max="100"
+                      android:visibility="invisible" />
+
+                  <TextView
+                      android:id="@+id/status"
+                      android:layout_width="wrap_content"
+                      android:layout_height="wrap_content"
+                      android:layout_marginTop="12dp"
+                      android:gravity="center"
+                      android:shadowColor="#000000"
+                      android:shadowRadius="6"
+                      android:text="@string/send_hint"
+                      android:textColor="#FFFFFF"
+                      android:textSize="17sp" />
+
+                  <Button
+                      android:id="@+id/btnChange"
+                      android:layout_width="wrap_content"
+                      android:layout_height="44dp"
+                      android:layout_marginTop="12dp"
+                      android:background="@drawable/btn_secondary_bg"
+                      android:paddingStart="24dp"
+                      android:paddingEnd="24dp"
+                      android:text="@string/btn_change"
+                      android:textAllCaps="false"
+                      android:textColor="#FFFFFF" />
+              </LinearLayout>
+          </FrameLayout>
+          FLOWSHARE_EOF
+
+      - name: "Fichier app/src/main/res/layout/activity_setup.xml"
+        run: |
+          mkdir -p "FlowShare/app/src/main/res/layout"
+          cat > "FlowShare/app/src/main/res/layout/activity_setup.xml" <<'FLOWSHARE_EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+              android:layout_width="match_parent"
+              android:layout_height="match_parent"
+              android:fillViewport="true">
+
+              <LinearLayout
+                  android:layout_width="match_parent"
+                  android:layout_height="wrap_content"
+                  android:orientation="vertical"
+                  android:padding="24dp">
+
+                  <TextView
+                      android:layout_width="wrap_content"
+                      android:layout_height="wrap_content"
+                      android:layout_marginTop="16dp"
+                      android:text="@string/settings"
+                      android:textColor="#FFFFFF"
+                      android:textSize="28sp"
+                      android:textStyle="bold" />
+
+                  <TextView
+                      android:layout_width="match_parent"
+                      android:layout_height="wrap_content"
+                      android:layout_marginTop="12dp"
+                      android:text="@string/main_intro"
+                      android:textColor="#C8CBE0"
+                      android:textSize="15sp" />
+
+                  <TextView
+                      android:id="@+id/status"
+                      android:layout_width="match_parent"
+                      android:layout_height="wrap_content"
+                      android:layout_marginTop="20dp"
+                      android:background="@drawable/card_bg"
+                      android:lineSpacingExtra="6dp"
+                      android:padding="18dp"
+                      android:textColor="#FFFFFF"
+                      android:textSize="15sp" />
+
+                  <Button
+                      android:id="@+id/btnPermissions"
+                      style="@style/FlowButton"
+                      android:text="@string/btn_permissions" />
+
+                  <Button
+                      android:id="@+id/btnNfc"
+                      style="@style/FlowButton"
+                      android:text="@string/btn_nfc" />
+
+                  <Button
+                      android:id="@+id/btnBluetooth"
+                      style="@style/FlowButton"
+                      android:text="@string/btn_bluetooth" />
+
+                  <Button
+                      android:id="@+id/btnRestricted"
+                      style="@style/FlowButton"
+                      android:text="@string/btn_restricted" />
+
+                  <Button
+                      android:id="@+id/btnAccessibility"
+                      style="@style/FlowButton"
+                      android:background="@drawable/btn_bg"
+                      android:text="@string/btn_accessibility" />
+
+                  <TextView
+                      android:layout_width="match_parent"
+                      android:layout_height="wrap_content"
+                      android:layout_marginTop="24dp"
+                      android:text="@string/a11y_explain"
+                      android:textColor="#9EA3C0"
+                      android:textSize="13sp" />
+
+                  <TextView
+                      android:layout_width="wrap_content"
+                      android:layout_height="wrap_content"
+                      android:layout_marginTop="28dp"
+                      android:text="@string/sensitivity_title"
+                      android:textColor="#FFFFFF"
+                      android:textSize="18sp"
+                      android:textStyle="bold" />
+
+                  <SeekBar
+                      android:id="@+id/seekSensitivity"
+                      android:layout_width="match_parent"
+                      android:layout_height="wrap_content"
+                      android:layout_marginTop="12dp" />
+
+                  <TextView
+                      android:id="@+id/sensitivityLabel"
+                      android:layout_width="match_parent"
+                      android:layout_height="wrap_content"
+                      android:layout_marginTop="6dp"
+                      android:textColor="#C8CBE0"
+                      android:textSize="14sp" />
+
+                  <TextView
+                      android:id="@+id/liveSignal"
+                      android:layout_width="match_parent"
+                      android:layout_height="wrap_content"
+                      android:layout_marginTop="12dp"
+                      android:background="@drawable/card_bg"
+                      android:padding="14dp"
+                      android:textColor="#8FD3FF"
+                      android:textSize="14sp" />
+              </LinearLayout>
+          </ScrollView>
+          FLOWSHARE_EOF
+
+      - name: "Fichier app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml"
+        run: |
+          mkdir -p "FlowShare/app/src/main/res/mipmap-anydpi-v26"
+          cat > "FlowShare/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml" <<'FLOWSHARE_EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+              <background android:drawable="@drawable/ic_launcher_background" />
+              <foreground android:drawable="@drawable/ic_launcher_foreground" />
+          </adaptive-icon>
+          FLOWSHARE_EOF
+
+      - name: "Fichier app/src/main/res/values/strings.xml"
+        run: |
+          mkdir -p "FlowShare/app/src/main/res/values"
+          cat > "FlowShare/app/src/main/res/values/strings.xml" <<'FLOWSHARE_EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <string name="app_name">FlowShare</string>
+              <string name="send_label">FlowShare</string>
+              <string name="hce_description">FlowShare – partage par rapprochement</string>
+
+              <string name="main_title">FlowShare</string>
+              <string name="main_intro">Ouvre une photo (dans FlowShare ou dans la Galerie Samsung), colle ton téléphone contre un autre Android qui a FlowShare : la photo passe d\'un écran à l\'autre.</string>
+              <string name="main_steps">1. Autorise l\'app (une seule fois, sur chaque téléphone)\n2. Active le NFC sur les deux téléphones\n3. Dans la Galerie : Partager → FlowShare (ou ouvre une photo ci-dessous)\n4. Colle les deux téléphones dos à dos, écrans allumés et déverrouillés</string>
+              <string name="btn_permissions">Autoriser FlowShare</string>
+              <string name="btn_nfc">Activer le NFC</string>
+              <string name="btn_pick">Choisir une photo à envoyer</string>
+              <string name="status_ready">✓ Prêt : les autorisations et le NFC sont OK</string>
+              <string name="status_perm_missing">Autorisations manquantes (appareils à proximité)</string>
+              <string name="status_nfc_off">Le NFC est désactivé</string>
+              <string name="status_no_nfc">Ce téléphone n\'a pas de NFC : FlowShare ne pourra pas fonctionner</string>
+
+              <string name="send_hint">Colle ton téléphone dos à dos contre un autre</string>
+              <string name="send_touch">Téléphone détecté…</string>
+              <string name="send_sending">Envoi…</string>
+              <string name="send_done">Envoyé ✓</string>
+              <string name="send_error">Échec de l\'envoi, réessaie</string>
+              <string name="send_timeout">L\'autre téléphone n\'a pas répondu. A-t-il autorisé FlowShare ?</string>
+              <string name="btn_change">Changer</string>
+
+              <string name="recv_waiting">Réception…</string>
+              <string name="recv_connected">Connecté</string>
+              <string name="recv_done">Photo reçue ✓\nEnregistrée dans Galerie › FlowShare</string>
+              <string name="recv_error">La réception a échoué</string>
+              <string name="recv_timeout">Le téléphone qui envoie n\'a pas été trouvé</string>
+              <string name="recv_perm">Ouvre FlowShare une fois et autorise les appareils à proximité pour pouvoir recevoir</string>
+              <string name="btn_open">Ouvrir</string>
+              <string name="btn_close">Fermer</string>
+              <string name="btn_allow">Autoriser</string>
+              <string name="nearby_error">Erreur de connexion : %1$s</string>
+              <string name="settings">Réglages</string>
+              <string name="banner_setup">⚠ Configuration incomplète : touche ici pour finir les réglages (Bluetooth, accessibilité…)</string>
+              <string name="btn_photos">Autoriser l\'accès aux photos</string>
+              <string name="btn_bluetooth">Activer le Bluetooth</string>
+              <string name="btn_accessibility">Activer FlowShare dans Accessibilité</string>
+              <string name="btn_restricted">Étape préalable : autoriser les paramètres restreints</string>
+              <string name="check_perms">Appareils à proximité autorisés</string>
+              <string name="check_nfc">NFC activé (dos à dos)</string>
+              <string name="check_no_nfc">Pas de NFC : seul le Bluetooth sera utilisé</string>
+              <string name="check_bt">Bluetooth activé (n\'importe quel sens)</string>
+              <string name="check_a11y">Service d\'accessibilité FlowShare (Galerie Samsung + réception Bluetooth)</string>
+              <string name="a11y_explain">Pourquoi l\'accessibilité ? Elle permet à FlowShare de voir quand une photo est ouverte dans la Galerie Samsung et d\'appuyer sur Partager à ta place, et d\'écouter le Bluetooth pour recevoir même app fermée. Android affiche un avertissement « contrôle total » : FlowShare ne lit que la Galerie et le menu Partager, rien n\'est envoyé sur internet.\n\nSi le bouton est grisé dans Accessibilité : Infos de l\'appli FlowShare › ⋮ (en haut à droite) › « Autoriser les paramètres restreints ».</string>
+              <string name="a11y_description">Envoie la photo ouverte dans ta galerie quand tu colles ton téléphone contre un autre, et reçoit les photos par Bluetooth. FlowShare lit uniquement l\'écran de la galerie et le menu Partager.</string>
+              <string name="sensitivity_title">Sensibilité du rapprochement (Bluetooth)</string>
+              <string name="sensitivity_value">Déclenchement à partir de %1$d dBm. Vers la gauche : il faut vraiment coller les téléphones. Vers la droite : ça déclenche de plus loin.</string>
+              <string name="live_signal">Signal FlowShare capté : %1$d dBm\n(colle les téléphones et règle la barre juste au-dessus de cette valeur)</string>
+              <string name="live_signal_none">Aucun signal capté. Pour tester : ouvre une photo sur l\'autre téléphone et rapproche-le.</string>
+              <string name="auto_no_share">Bouton Partager introuvable dans la galerie</string>
+              <string name="auto_not_found">FlowShare introuvable dans le menu Partager. Astuce : épingle FlowShare en haut du menu Partager.</string>
+          </resources>
+          FLOWSHARE_EOF
+
+      - name: "Fichier app/src/main/res/values/themes.xml"
+        run: |
+          mkdir -p "FlowShare/app/src/main/res/values"
+          cat > "FlowShare/app/src/main/res/values/themes.xml" <<'FLOWSHARE_EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <style name="Theme.FlowShare" parent="android:Theme.DeviceDefault.NoActionBar">
+                  <item name="android:colorAccent">#6C8CFF</item>
+                  <item name="android:windowBackground">#0E1020</item>
+                  <item name="android:statusBarColor">#0E1020</item>
+                  <item name="android:navigationBarColor">#0E1020</item>
+              </style>
+
+              <style name="Theme.FlowShare.Fullscreen">
+                  <item name="android:windowBackground">#000000</item>
+                  <item name="android:statusBarColor">#000000</item>
+                  <item name="android:navigationBarColor">#000000</item>
+              </style>
+
+              <style name="FlowButton">
+                  <item name="android:layout_width">match_parent</item>
+                  <item name="android:layout_height">56dp</item>
+                  <item name="android:layout_marginTop">12dp</item>
+                  <item name="android:background">@drawable/btn_secondary_bg</item>
+                  <item name="android:textAllCaps">false</item>
+                  <item name="android:textColor">#FFFFFF</item>
+              </style>
+          </resources>
+          FLOWSHARE_EOF
+
+      - name: "Fichier app/src/main/res/xml/accessibility_service.xml"
+        run: |
+          mkdir -p "FlowShare/app/src/main/res/xml"
+          cat > "FlowShare/app/src/main/res/xml/accessibility_service.xml" <<'FLOWSHARE_EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+              android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged|typeWindowsChanged"
+              android:accessibilityFeedbackType="feedbackGeneric"
+              android:accessibilityFlags="flagReportViewIds|flagRetrieveInteractiveWindows|flagIncludeNotImportantViews"
+              android:canPerformGestures="true"
+              android:canRetrieveWindowContent="true"
+              android:description="@string/a11y_description"
+              android:notificationTimeout="150"
+              android:settingsActivity="com.flowshare.app.SetupActivity" />
+          FLOWSHARE_EOF
+
+      - name: "Fichier app/src/main/res/xml/apduservice.xml"
+        run: |
+          mkdir -p "FlowShare/app/src/main/res/xml"
+          cat > "FlowShare/app/src/main/res/xml/apduservice.xml" <<'FLOWSHARE_EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <host-apdu-service xmlns:android="http://schemas.android.com/apk/res/android"
+              android:description="@string/hce_description"
+              android:requireDeviceUnlock="false">
+              <!-- AID standard d'une puce NFC "Type 4" contenant un message NDEF -->
+              <aid-group
+                  android:category="other"
+                  android:description="@string/hce_description">
+                  <aid-filter android:name="D2760000850101" />
+              </aid-group>
+          </host-apdu-service>
+          FLOWSHARE_EOF
+
+      - name: "Fichier build.gradle.kts"
+        run: |
+          mkdir -p "FlowShare/."
+          cat > "FlowShare/build.gradle.kts" <<'FLOWSHARE_EOF'
+          plugins {
+              id("com.android.application") version "8.7.3" apply false
+              id("org.jetbrains.kotlin.android") version "2.0.21" apply false
+          }
+          FLOWSHARE_EOF
+
+      - name: "Fichier gradle.properties"
+        run: |
+          mkdir -p "FlowShare/."
+          cat > "FlowShare/gradle.properties" <<'FLOWSHARE_EOF'
+          org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+          android.useAndroidX=true
+          kotlin.code.style=official
+          android.nonTransitiveRClass=true
+          FLOWSHARE_EOF
+
+      - name: "Fichier settings.gradle.kts"
+        run: |
+          mkdir -p "FlowShare/."
+          cat > "FlowShare/settings.gradle.kts" <<'FLOWSHARE_EOF'
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+
+          rootProject.name = "FlowShare"
+          include(":app")
+          FLOWSHARE_EOF
+
+      - name: Compiler
+        working-directory: FlowShare
+        run: gradle assembleDebug --no-daemon --stacktrace
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FlowShare-apk
+          path: FlowShare/app/build/outputs/apk/debug/app-debug.apk
